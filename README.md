@@ -140,6 +140,7 @@ config.json                        唯一日常编辑入口（空项目列表）
 projects.example.json              不生效的配置示例
 scripts/update.py                  聚合与元数据读取器
 scripts/add_request.py              校验并登记手机 Issue 请求
+scripts/dispatch_publish.py           触发源重新发布
 scripts/make_icon.py               自制 PNG 图标生成器
 .github/workflows/publish.yml      定时检查与 Pages 发布
 .github/workflows/add-ipa.yml      所有者请求验证、写配置、触发发布

@@ -42,22 +42,7 @@ jobs:
       - name: Request source re-publication
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import json, os, urllib.request
-          url = 'https://api.github.com/repos/xx123456789xx/ipa-source/actions/workflows/publish.yml/dispatches'
-          body = json.dumps({'ref': 'main'}).encode()
-          req = urllib.request.Request(url, body, {
-              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'Content-Type': 'application/json',
-              'User-Agent': 'IPA-Source-Owner-Request'
-          })
-          with urllib.request.urlopen(req, timeout=30) as response:
-              if response.status != 204:
-                  raise SystemExit('workflow_dispatch returned unexpected status')
-          print('Source publication requested.')
+        run: python scripts/dispatch_publish.py
       - name: Comment and close processed request
         env:
           GH_TOKEN: ${{ github.token }}
