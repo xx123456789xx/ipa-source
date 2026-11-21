@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """Generate a public AltStore-style source; Python 3.11+, standard library only.
 Never installs, executes, patches or signs IPA files. Config must be trusted.
@@ -392,7 +393,7 @@ def generate(config_path, output, cache_path):
         'description': source.get('description', ''), 'apps': apps, 'news': [],
     }
     if base_url:
-        result.update(website=base_url + '/', iconURL=base_url + '/icon.png',
+        result.update(website=base_url + '/', iconURL=base_url + '/apple-touch-icon-v2.png',
                       sourceURL=base_url + '/source.json')
     # Only public metadata goes in public/. IPA bytes and credentials are never published.
     write_bundle([(output / 'source.json', result),
