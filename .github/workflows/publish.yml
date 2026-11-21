@@ -1,0 +1,72 @@
+name: Update and publish IPA source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - config.json
+      - scripts/**
+      - tests/**
+      - public/**
+      - .github/workflows/publish.yml
+  schedule:
+    # Every 30 minutes, off the busiest top-of-hour slots. GitHub can delay jobs.
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipa-source-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Restore IPA metadata cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/metadata.json
+          key: ipa-meta-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ipa-meta-v1-${{ github.ref_name }}-
+      - name: Build source from public releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: python scripts/update.py
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy source and landing page
+        id: deployment
+        uses: actions/deploy-pages@v4

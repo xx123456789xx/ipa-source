@@ -1,0 +1,11 @@
+{
+  "name": "我的 IPA 应用源",
+  "identifier": "io.github.xx123456789xx.ipa-source",
+  "subtitle": "集中订阅 · 自动追踪公开发行版",
+  "description": "个人维护的 IPA 聚合源。收录不代表安全审计或 LiveContainer 兼容性认证。",
+  "apps": [],
+  "news": [],
+  "website": "https://xx123456789xx.github.io/ipa-source/",
+  "sourceURL": "https://xx123456789xx.github.io/ipa-source/source.json",
+  "iconURL": "https://xx123456789xx.github.io/ipa-source/icon.png"
+}

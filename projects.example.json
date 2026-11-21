@@ -1,0 +1,24 @@
+{
+  "说明": "示例不生效。将需要的条目复制到 config.json 的 projects 数组，并替换占位值。首次建议只添加一个项目。bundle_identifier 可选，用于锁定期望的应用身份，不是安全验证。",
+  "projects": [
+    {
+      "repo": "OWNER/REPOSITORY",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": false,
+      "enabled": true,
+      "name": "应用显示名称（可删除此字段）"
+    },
+    {
+      "repo": "https://github.com/OWNER/REPOSITORY/releases",
+      "asset_pattern": "*arm64*.ipa",
+      "include_prereleases": true,
+      "bundle_identifier": "com.example.app",
+      "icon_url": "https://example.com/app-icon.png"
+    },
+    {
+      "url": "https://example.com/download/app.ipa",
+      "name": "直链应用",
+      "bundle_identifier": "com.example.direct"
+    }
+  ]
+}
