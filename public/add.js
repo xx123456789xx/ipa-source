@@ -9,6 +9,7 @@ form.addEventListener('submit',event=>{
   let url;
   try{url=new URL(raw);}catch(_){message.textContent='请输入有效的 HTTPS 网址。';return;}
   if(url.protocol!=='https:'||url.username||url.password){message.textContent='只接受不带账号密码的 HTTPS 链接。';return;}
+  if(url.search||url.hash){message.textContent='请移除查询参数和锚点；不接受带临时令牌的私有下载链接。';return;}
   if(pattern.length>120||!pattern.toLowerCase().endsWith('.ipa')){message.textContent='文件匹配规则请以 .ipa 结尾，最多 120 个字符。';return;}
   const body=[
     'IPA_SOURCE_REQUEST_V1',
