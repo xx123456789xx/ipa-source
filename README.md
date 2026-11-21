@@ -35,7 +35,17 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 
 > 本地 / 对话里的 `minis://` 预览不是公网地址，不能给 LiveContainer 当网络源。创建或发布仓库需要你本人操作，模板没有自动调用你的 GitHub 账号。
 
-## 二、添加项目
+## 二、在手机网页添加项目
+
+打开首页点 **“添加应用 +”**，粘贴公开 GitHub 仓库 / Release 地址，或免登录 `.ipa` 直链；可填写 IPA 文件名匹配规则和是否包含测试版。点继续后会跳转到 GitHub 的预填 Issue 页面，核对内容并点一次 **Submit new issue** 才会触发处理。
+
+为避免把仓库写入令牌暴露在网页，这个静态表单不直接写 GitHub。请求以公开 Issue 提交（请求中的 URL 会在公开仓库可见），自动化只接受仓库所有者 `xx123456789xx` 自己提交的指定格式；访客即使能创建其他 Issue，也不能触发源配置写入。需要已登录 GitHub、仓库 Issues 功能可用。
+
+工作流先验证地址、Release 中是否有匹配 IPA、实际 IPA 包元数据和整个候选源；任一步不通过都不改配置。成功后机器人追加到 `config.json`、触发源重新发布、在 Issue 留言并关闭。直接链接仅接受无需登录且不带查询令牌的公开 `.ipa` URL。刷新 LiveContainer 的固定源即可查看新条目。
+
+> 手动添加仍可通过直接编辑 `config.json` 的 `projects` 数组，后续 Actions 会自动发布。没有 GitHub 账号时，不能从静态网页获得写入仓库的权限。
+
+## 三、添加项目配置字段
 
 在 `config.json` 中把 `projects: []` 改为下列形式。**示例占位符必须替换，不能原样运行。**
 
@@ -82,7 +92,7 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 
 首次添加时建议先只加一个项目，确认工作流与客户端正常，再扩充。重复 Bundle ID 会停止发布，避免同一 App 多渠道互相覆盖。
 
-## 三、更新、缓存与失败处理
+## 四、更新、缓存与失败处理
 
 - 脚本读取上游 IPA 的 `CFBundleIdentifier`、版本号、构建号、最低 iOS 版本，并计算实际字节大小与 SHA-256。版本号**不靠猜 Release tag**。
 - 下载只用于元数据读取：临时文件结束后释放，不解压到目录、不安装、不执行。实际客户端下载仍直接访问上游，不镜像 IPA。
@@ -98,7 +108,7 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 
 `public/status.json` 公开列出本次选择的上游链接、版本、包大小与 SHA-256，便于核对；哈希只证明所下载文件的指纹，**不证明安全或来源可信**。
 
-## 四、本地运行与测试
+## 五、本地运行与测试
 
 需要 Python 3.11+，没有 pip 依赖：
 
@@ -115,12 +125,12 @@ SOURCE_BASE_URL=https://YOURNAME.github.io/ipa-source python3 scripts/update.py
 
 本地预览可运行 `python3 -m http.server 8080 --directory public`，浏览器打开 `http://127.0.0.1:8080`；这只是预览，不是可订阅的 HTTPS 服务。
 
-## 五、安全与隐私
+## 六、安全与隐私
 
 - 配置文件与工作流属于**可信代码**。不要直接运行陌生人提交的修改，不要把私有网络地址放入配置。URL 校验只做 HTTPS 与明显本地地址拦截，不是完整的 DNS 重绑定 / SSRF 防护。
 - 只添加你有权分发/引用的公开应用；不要填带账号、令牌或临时签名的私有下载链接。URL 会原样进入公开源与状态文件。
 - 首次探测会由工作流服务器请求上游 IPA；最终下载时，上游会看到客户端的下载请求。自定义外部图标也会向对应主机发起请求。
-- 本首页无分析统计、登录、第三方 JS 或字体。GitHub 托管平台本身可能记录正常请求。
+- 本首页无分析统计、登录表单、第三方 JS 或字体。添加请求会跳转到 GitHub，需要所有者账号登录和人工确认；Issue 内容是公开的。GitHub 托管平台本身可能记录正常请求。
 - 自动读取 plist 和 SHA-256 不是恶意代码检测。LiveContainer 内应用的隔离边界不同于正常安装，勿混用不可信 IPA 与敏感账号。
 
 ## 文件结构
@@ -129,19 +139,23 @@ SOURCE_BASE_URL=https://YOURNAME.github.io/ipa-source python3 scripts/update.py
 config.json                        唯一日常编辑入口（空项目列表）
 projects.example.json              不生效的配置示例
 scripts/update.py                  聚合与元数据读取器
+scripts/add_request.py              校验并登记手机 Issue 请求
 scripts/make_icon.py               自制 PNG 图标生成器
 .github/workflows/publish.yml      定时检查与 Pages 发布
+.github/workflows/add-ipa.yml      所有者请求验证、写配置、触发发布
 public/                            待发布静态站点与源
   source.json                      客户端订阅这个文件
   status.json                      公开文件指纹与上游信息
-  index.html / style.css / app.js   展示与复制订阅地址
-  icon.png                         默认图标
- tests/                            离线回归测试（不需要真实 IPA）
+  index.html / style.css / app.js   首页展示与订阅地址复制
+  add.html / add.js                 手机粘贴项目地址表单
+  apple-touch-icon-v2.png           iPhone 主屏幕与网页品牌图标
+  icon.png                          通用源图标
+tests/                              离线回归测试
 ```
 
 模板代码使用 MIT 许可；上游 App 的许可与分发权独立，不受本模板许可覆盖。
 
-## 六、在 LiveContainer 添加源
+## 七、在 LiveContainer 添加源
 
 部署成功后，用 Safari 打开你的 HTTPS 首页，点“添加到 LiveContainer”；首页会生成官方格式的导入链接：
 

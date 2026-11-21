@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """Generate a public AltStore-style source; Python 3.11+, standard library only.
 Never installs, executes, patches or signs IPA files. Config must be trusted.
@@ -215,7 +214,7 @@ def build_app(project, resolved, metadata, base_url, previous=None):
     expected = project.get('bundle_identifier')
     if expected and expected != metadata['bundleIdentifier']:
         raise ValueError('IPA Bundle ID 与锁定的 bundle_identifier 不一致，拒绝发布')
-    icon = project.get('icon_url') or (base_url + '/icon.png' if base_url else '')
+    icon = project.get('icon_url') or (base_url + '/apple-touch-icon-v2.png' if base_url else '')
     if not icon:
         raise ValueError('收录应用前请设置 source.base_url 或 SOURCE_BASE_URL')
     https_url(icon)

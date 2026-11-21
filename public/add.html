@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https:; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self' https://github.com">
+<title>添加应用 · 我的 IPA 应用源</title>
+<link rel="icon" type="image/png" href="apple-touch-icon-v2.png"><link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-v2.png"><link rel="stylesheet" href="style.css">
+<script src="add.js" defer></script>
+</head>
+<body>
+<main>
+<header><a class="brand" href="./"><img src="apple-touch-icon-v2.png" width="36" height="36" alt=""><span>IPA / COLLECTION</span></a><span class="pill">添加到个人源</span></header>
+<section class="hero add-hero">
+<p class="eyebrow">CONTRIBUTE TO YOUR SOURCE</p>
+<h1>粘贴地址<span class="dot">.</span></h1>
+<p class="lead">输入公开 GitHub 项目 / Release 页面，或免登录 IPA 直链。检查后加入你的个人源。</p>
+<form id="add-form">
+<label for="project-url">项目或 IPA 地址</label>
+<input id="project-url" name="url" type="url" placeholder="https://github.com/owner/project" autocomplete="url" required>
+<p class="field-hint">支持 GitHub 仓库 / Releases / Release 页面，以及公开 .ipa 直链。</p>
+<label for="asset-pattern">IPA 文件名匹配规则</label>
+<input id="asset-pattern" name="pattern" type="text" value="*.ipa" maxlength="120" autocomplete="off">
+<p class="field-hint">多个 IPA 命中时会停止添加，请写得更具体，例如 *arm64.ipa。</p>
+<label class="check-row"><input id="prerelease" type="checkbox"><span>包含测试版（Release prerelease）</span></label>
+<button class="submit-button" type="submit">继续到 GitHub 确认添加 <span aria-hidden="true">↗</span></button>
+</form>
+<div class="privacy-note"><strong>最后一步会跳到 GitHub。</strong>需要用仓库所有者账号登录，并在那里点一次“提交”。添加请求会以 GitHub Issue 形式公开；自动化只接受账号 <code>xx123456789xx</code> 提交的请求。通过检查后更新仓库并重新发布。不要输入私有链接、密码或令牌。</div>
+<p class="notice" id="form-message" role="status"></p>
+</section>
+<footer><a href="./">← 返回应用源首页</a><span>每次添加都进行格式与 IPA 检查</span></footer>
+</main>
+</body></html>
