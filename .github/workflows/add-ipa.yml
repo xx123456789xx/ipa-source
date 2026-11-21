@@ -1,0 +1,74 @@
+name: Add IPA project from phone
+
+on:
+  issues:
+    types: [opened]
+
+# Only the exact repository owner can open a request that runs the write job.
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: add-ipa-source-config
+  cancel-in-progress: false
+
+jobs:
+  add-project:
+    if: github.repository == 'xx123456789xx/ipa-source' && github.actor == 'xx123456789xx' && github.event.issue.user.login == 'xx123456789xx' && github.event.issue.title == '[IPA Source] Add project'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Restore IPA metadata cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/metadata.json
+          key: ipa-meta-v1-main-add-${{ github.run_id }}
+          restore-keys: |
+            ipa-meta-v1-main-
+      - name: Validate request, check IPA, and update config
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/add_request.py --event "$GITHUB_EVENT_PATH" --commit
+      - name: Request source re-publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = 'https://api.github.com/repos/xx123456789xx/ipa-source/actions/workflows/publish.yml/dispatches'
+          body = json.dumps({'ref': 'main'}).encode()
+          req = urllib.request.Request(url, body, {
+              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'Content-Type': 'application/json',
+              'User-Agent': 'IPA-Source-Owner-Request'
+          })
+          with urllib.request.urlopen(req, timeout=30) as response:
+              if response.status != 204:
+                  raise SystemExit('workflow_dispatch returned unexpected status')
+          print('Source publication requested.')
+      - name: Comment and close processed request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "Validated and added to config. Source publication was requested; check the Actions run before refreshing LiveContainer."
+          gh issue close "$ISSUE_NUMBER" --reason completed
+      - name: Report rejected request without leaking data
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "This request did not complete validation or publication. Check this workflow run's logs; the source may need owner review before retrying. Do not repost private URLs or credentials."
