@@ -16,6 +16,12 @@
       "asset_pattern": "*.ipa",
       "include_prereleases": true,
       "enabled": true
+    },
+    {
+      "repo": "kolbicz/WQFiles",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": true,
+      "enabled": true
     }
   ]
 }
