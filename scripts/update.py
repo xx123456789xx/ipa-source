@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Generate a public AltStore-style source; Python 3.11+, standard library only.
 Never installs, executes, patches or signs IPA files. Config must be trusted.
+
+v1.3: app icons are extracted from the IPA itself (including Apple CgBI
+crushed PNGs, normalised back to standard PNG), a single failing project
+with a previously published entry keeps that entry instead of blocking the
+whole source, and release notes no longer double as the app description.
 """
 import argparse
+import base64
+import copy
 import fnmatch
 import hashlib
 import ipaddress
@@ -11,16 +18,21 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import struct
 import sys
 import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
-USER_AGENT = 'Personal-IPA-Source/1.0'
+USER_AGENT = 'Personal-IPA-Source/1.3'
+CACHE_SCHEMA = 2
+DEFAULT_TINT = '4263EB'
+DEFAULT_DESCRIPTION = '公开上游 IPA。收录不代表兼容性或安全认证。'
 
 
 def https_url(value):
@@ -66,7 +78,7 @@ def request(url, timeout, api=False):
             raise ValueError('API 凭据仅允许发送至 api.github.com')
         headers['Accept'] = 'application/vnd.github+json'
         headers['X-GitHub-Api-Version'] = '2022-11-28'
-        token = os.environ.get('GITHUB_TOKEN', '')
+        token = os.environ.get('GITHUB_TOKEN')
         if token:
             headers['Authorization'] = 'Bearer ' + token
     return OPENER.open(urllib.request.Request(url, headers=headers), timeout=timeout)
@@ -142,6 +154,221 @@ def resolve_github(project, timeout):
     return resolved
 
 
+# ---------------------------------------------------------------------------
+# Minimal PNG codec (8-bit, non-interlaced). Needed to undo Apple's CgBI
+# crushing: raw-deflate IDAT, filter-0 rows, BGRA premultiplied pixels.
+# Any failure returns None and the caller falls back to the source icon;
+# icon problems must never block a source update.
+# ---------------------------------------------------------------------------
+
+def _png_chunks(data):
+    if not data.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise ValueError('不是 PNG')
+    chunks = []
+    offset = 8
+    while offset + 12 <= len(data):
+        length, kind = struct.unpack('>I4s', data[offset:offset + 8])
+        chunks.append((kind.decode('latin1'), data[offset + 8:offset + 8 + length]))
+        offset += 12 + length
+        if kind == b'IEND':
+            break
+    return chunks
+
+
+def _paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    if pb <= pc:
+        return b
+    return c
+
+
+def decode_png_rgba(data):
+    """Decode an 8-bit non-interlaced PNG (standard or CgBI) to RGBA bytes."""
+    chunks = _png_chunks(data)
+    header = None
+    palette, transparency, compressed = [], b'', b''
+    crushed = False
+    for kind, payload in chunks:
+        if kind == 'CgBI':
+            crushed = True
+        elif kind == 'IHDR':
+            header = struct.unpack('>IIBBBBB', payload)
+        elif kind == 'PLTE':
+            palette = [tuple(payload[i:i + 3]) for i in range(0, len(payload) - 2, 3)]
+        elif kind == 'tRNS':
+            transparency = payload
+        elif kind == 'IDAT':
+            compressed += payload
+    if header is None:
+        raise ValueError('PNG 缺少 IHDR')
+    width, height, depth, colour, _comp, _filt, interlace = header
+    if depth != 8 or interlace != 0 or width < 1 or height < 1 or width > 4096 or height > 4096:
+        raise ValueError('不支持的 PNG 形式')
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
+    if channels is None:
+        raise ValueError('不支持的 PNG 颜色类型')
+    if crushed:
+        raw = zlib.decompress(compressed, -15)
+        stride = width * 4
+        if len(raw) == height * (stride + 1):
+            rows = [raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)] for y in range(height)]
+        elif len(raw) == height * stride:
+            rows = [raw[y * stride:(y + 1) * stride] for y in range(height)]
+        else:
+            raise ValueError('CgBI 数据长度不符')
+        pixels = bytearray(width * height * 4)
+        for y, row in enumerate(rows):
+            for x in range(width):
+                i = (y * width + x) * 4
+                b, g, r, a = row[x * 4:x * 4 + 4]
+                if a == 0:
+                    continue
+                if a != 255:  # undo premultiplication
+                    r, g, b = (min(255, c * 255 // a) for c in (r, g, b))
+                pixels[i:i + 4] = bytes((r, g, b, a))
+        return width, height, pixels
+    raw = zlib.decompress(compressed)
+    stride = width * channels
+    if len(raw) < height * (stride + 1):
+        raise ValueError('PNG 数据不完整')
+    recon = bytearray(height * stride)
+    previous = bytearray(stride)
+    pos = 0
+    for y in range(height):
+        kind = raw[pos]
+        line = bytearray(raw[pos + 1:pos + 1 + stride])
+        pos += stride + 1
+        if kind == 1:
+            for i in range(channels, stride):
+                line[i] = (line[i] + line[i - channels]) & 0xFF
+        elif kind == 2:
+            for i in range(stride):
+                line[i] = (line[i] + previous[i]) & 0xFF
+        elif kind == 3:
+            for i in range(stride):
+                left = line[i - channels] if i >= channels else 0
+                line[i] = (line[i] + ((left + previous[i]) >> 1)) & 0xFF
+        elif kind == 4:
+            for i in range(stride):
+                left = line[i - channels] if i >= channels else 0
+                up = previous[i]
+                corner = previous[i - channels] if i >= channels else 0
+                line[i] = (line[i] + _paeth(left, up, corner)) & 0xFF
+        elif kind != 0:
+            raise ValueError('未知 PNG 滤波器')
+        recon[y * stride:(y + 1) * stride] = line
+        previous = line
+    pixels = bytearray(width * height * 4)
+    for i in range(width * height):
+        src = recon[i * channels:(i + 1) * channels]
+        out = i * 4
+        if colour == 6:
+            pixels[out:out + 4] = src
+        elif colour == 2:
+            pixels[out:out + 4] = bytes((src[0], src[1], src[2], 255))
+        elif colour == 0:
+            pixels[out:out + 4] = bytes((src[0], src[0], src[0], 255))
+        elif colour == 4:
+            pixels[out:out + 4] = bytes((src[0], src[0], src[0], src[1]))
+        else:  # palette
+            r, g, b = palette[src[0]] if src[0] < len(palette) else (0, 0, 0)
+            a = transparency[src[0]] if src[0] < len(transparency) else 255
+            pixels[out:out + 4] = bytes((r, g, b, a))
+    return width, height, pixels
+
+
+def encode_png_rgba(width, height, pixels):
+    def chunk(kind, payload):
+        return (struct.pack('>I', len(payload)) + kind + payload +
+                struct.pack('>I', zlib.crc32(kind + payload) & 0xFFFFFFFF))
+    rows = b''.join(b'\x00' + bytes(pixels[y * width * 4:(y + 1) * width * 4])
+                    for y in range(height))
+    return (b'\x89PNG\r\n\x1a\n' +
+            chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b''))
+
+
+def normalise_icon(data):
+    """Return (standard_png_bytes, tint_hex) or None; never raises."""
+    try:
+        width, height, pixels = decode_png_rgba(data)
+        total_r = total_g = total_b = count = 0
+        for i in range(0, len(pixels), 4):
+            if pixels[i + 3] >= 128:
+                total_r += pixels[i]
+                total_g += pixels[i + 1]
+                total_b += pixels[i + 2]
+                count += 1
+        tint = None
+        if count:
+            tint = '%02X%02X%02X' % (total_r // count, total_g // count, total_b // count)
+        return encode_png_rgba(width, height, pixels), tint
+    except Exception:
+        return None
+
+
+def _icon_base_names(info):
+    bases = []
+
+    def collect(node):
+        if isinstance(node, dict):
+            for name in node.get('CFBundleIconFiles') or []:
+                if isinstance(name, str):
+                    bases.append(name)
+            single = node.get('CFBundleIconFile')
+            if isinstance(single, str):
+                bases.append(single)
+
+    for key in ('CFBundleIcons', 'CFBundleIcons~ipad'):
+        section = info.get(key)
+        if isinstance(section, dict):
+            collect(section.get('CFBundlePrimaryIcon'))
+    collect(info)
+    return bases
+
+
+def extract_icon(archive, app_prefix, info):
+    """Largest declared app icon in the .app root, normalised, or None."""
+    bases = _icon_base_names(info)
+    candidates = []
+    for entry in archive.infolist():
+        name = entry.filename
+        if not name.startswith(app_prefix) or '/' in name[len(app_prefix):]:
+            continue
+        filename = name[len(app_prefix):]
+        if not filename.lower().endswith('.png') or entry.file_size > 8 * 1024 * 1024:
+            continue
+        if not (filename.startswith('AppIcon') or
+                any(filename.startswith(base) for base in bases)):
+            continue
+        try:
+            data = archive.read(entry)
+            chunks = _png_chunks(data)
+            header = next(payload for kind, payload in chunks if kind == 'IHDR')
+            width, height = struct.unpack('>II', header[:8])
+        except Exception:
+            continue
+        candidates.append((width * height, len(data), data))
+    candidates.sort(reverse=True)
+    for _area, _size, data in candidates:
+        result = normalise_icon(data)
+        if result is not None:
+            return result  # (png_bytes, tint)
+    return None
+
+
+class IPAMetadata(dict):
+    """Metadata dict; icon data rides as attributes, never in JSON."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.icon_png = None
+        self.icon_tint = None
+
+
 def inspect_ipa(path):
     """Read only the root application's plist, never zip-extract the archive."""
     with zipfile.ZipFile(path) as archive:
@@ -163,11 +390,13 @@ def inspect_ipa(path):
     version = str(info.get('CFBundleShortVersionString') or info.get('CFBundleVersion') or '').strip()
     if not version:
         raise ValueError('缺少 CFBundleShortVersionString / CFBundleVersion')
-    metadata = {
+    metadata = IPAMetadata({
         'bundleIdentifier': bundle,
         'version': version,
         'name': str(info.get('CFBundleDisplayName') or info.get('CFBundleName') or bundle),
-    }
+    })
+    metadata.info = info
+    metadata.app_prefix = entry.filename[:-len('Info.plist')]
     build = info.get('CFBundleVersion')
     if build is not None and str(build).strip():
         metadata['buildVersion'] = str(build).strip()
@@ -197,6 +426,17 @@ def download_metadata(url, maximum, timeout):
                 file.write(chunk)
             file.seek(0)
             metadata = inspect_ipa(file)
+            # The IPA is already fully downloaded for hashing; extracting
+            # its icon here costs no extra traffic. Cosmetic only: any icon
+            # failure leaves icon_png unset and the source icon is used.
+            try:
+                file.seek(0)
+                with zipfile.ZipFile(file) as archive:
+                    found = extract_icon(archive, metadata.app_prefix, metadata.info)
+                if found is not None:
+                    metadata.icon_png, metadata.icon_tint = found
+            except Exception:
+                pass
         metadata.update(size=count, sha256=digest.hexdigest())
         # Direct URLs can change without any release API; always re-download.
         if modified:
@@ -210,14 +450,28 @@ def download_metadata(url, maximum, timeout):
         raise ValueError(f'IPA 下载 HTTP {exc.code}；仅支持无需登录的公开下载') from None
 
 
+class ConfigFailure(ValueError):
+    """Maintainer/config mistake: always fatal, never masked by a fallback."""
+
+
 def build_app(project, resolved, metadata, base_url, previous=None):
     expected = project.get('bundle_identifier')
     if expected and expected != metadata['bundleIdentifier']:
-        raise ValueError('IPA Bundle ID 与锁定的 bundle_identifier 不一致，拒绝发布')
-    icon = project.get('icon_url') or (base_url + '/apple-touch-icon-v2.png' if base_url else '')
+        raise ConfigFailure('IPA Bundle ID 与锁定的 bundle_identifier 不一致，拒绝发布')
+    icon_png = getattr(metadata, 'icon_png', None)
+    explicit_icon = project.get('icon_url')
+    if explicit_icon:
+        icon = explicit_icon
+    elif icon_png and base_url:
+        icon = base_url + '/icons/' + metadata['bundleIdentifier'] + '.png'
+    elif base_url:
+        icon = base_url + '/apple-touch-icon-v2.png'
+    else:
+        icon = ''
     if not icon:
-        raise ValueError('收录应用前请设置 source.base_url 或 SOURCE_BASE_URL')
+        raise ConfigFailure('收录应用前请设置 source.base_url 或 SOURCE_BASE_URL')
     https_url(icon)
+    tint = getattr(metadata, 'icon_tint', None) if (icon_png and not explicit_icon) else None
     date = resolved.get('release_date') or metadata.get('lastModified')
     if not date and previous and previous.get('sha256') == metadata['sha256']:
         date = previous.get('date')
@@ -236,10 +490,12 @@ def build_app(project, resolved, metadata, base_url, previous=None):
         'developerName': project.get('developer_name') or
                          resolved.get('project_url', '').removeprefix('https://github.com/').split('/')[0]
                          or '上游发行者',
-        'localizedDescription': project.get('description') or resolved.get('description') or
-                                '公开上游 IPA。收录不代表兼容性或安全认证。',
+        # Release notes belong to the version, not the app description:
+        # dumping a full changelog here bloated source.json and read badly
+        # in clients. A custom project description still wins.
+        'localizedDescription': project.get('description') or DEFAULT_DESCRIPTION,
         'iconURL': icon,
-        'tintColor': '4263EB',
+        'tintColor': tint or DEFAULT_TINT,
         'versions': [version],
         # Legacy single-version fields for older source readers.
         'version': version['version'],
@@ -252,7 +508,7 @@ def build_app(project, resolved, metadata, base_url, previous=None):
         permissions = project['app_permissions']
         if not isinstance(permissions, dict) or not all(
                 isinstance(permissions.get(key), list) for key in ('entitlements', 'privacy')):
-            raise ValueError('app_permissions 必须是含 entitlements 和 privacy 数组的对象')
+            raise ConfigFailure('app_permissions 必须是含 entitlements 和 privacy 数组的对象')
         # Explicit maintainer declaration, not inferred/verified by this tool.
         app['appPermissions'] = permissions
     return app, date
@@ -305,6 +561,38 @@ def write_bundle(entries):
         raise
 
 
+def write_icons(output, icons):
+    """Write extracted icons under output/icons, pruning stale ones.
+
+    Only files this generator owns live in that directory (named by bundle
+    identifier). Unchanged icons are not rewritten.
+    """
+    directory = output / 'icons'
+    wanted = {bundle + '.png': data for bundle, data in icons.items()}
+    if directory.exists():
+        for existing in directory.glob('*.png'):
+            if existing.name not in wanted:
+                existing.unlink()
+    for name, data in wanted.items():
+        path = directory / name
+        if path.exists() and path.read_bytes() == data:
+            continue
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix('.png.tmp')
+        try:
+            temporary.write_bytes(data)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def _project_key(project):
+    if project.get('repo'):
+        return 'github:' + repo_name(project['repo'])
+    url = https_url(project['url'])
+    return 'direct:' + hashlib.sha256(url.encode()).hexdigest()
+
+
 def generate(config_path, output, cache_path):
     config = read_json(config_path)
     source = config['source']
@@ -324,68 +612,127 @@ def generate(config_path, output, cache_path):
         raise ValueError('max_ipa_mb 应在 1–4096，超时应在 5–300 秒之间')
     maximum = maximum_mb * 1024 * 1024
     try:
-        old_cache = read_json(cache_path, {'schema': 1, 'items': {}})
-        if old_cache.get('schema') != 1:
-            old_cache = {'schema': 1, 'items': {}}
+        old_cache = read_json(cache_path, {'schema': CACHE_SCHEMA, 'items': {}})
+        if old_cache.get('schema') != CACHE_SCHEMA:
+            # Older caches lack extracted icons and last-good app entries;
+            # treat them as empty so everything is fetched once, fresh.
+            old_cache = {'schema': CACHE_SCHEMA, 'items': {}}
     except (ValueError, OSError):
-        old_cache = {'schema': 1, 'items': {}}
-    new_cache = {'schema': 1, 'items': {}}
+        old_cache = {'schema': CACHE_SCHEMA, 'items': {}}
+    new_cache = {'schema': CACHE_SCHEMA, 'items': {}}
     apps, status, bundle_ids = [], [], set()
-    errors = []
+    icons = {}
+    errors, warnings = [], []
     for number, project in enumerate(projects, 1):
         try:
             if not isinstance(project, dict):
-                raise ValueError('项目条目必须是对象')
+                raise ConfigFailure('项目条目必须是对象')
             if project.get('enabled', True) is False:
                 continue
             if bool(project.get('repo')) == bool(project.get('url')):
-                raise ValueError('每个项目必须且只能设置 repo 或 url 中的一项')
+                raise ConfigFailure('每个项目必须且只能设置 repo 或 url 中的一项')
             if not base_url and not project.get('icon_url'):
-                raise ValueError('收录应用前需设置 source.base_url 或 SOURCE_BASE_URL')
+                raise ConfigFailure('收录应用前需设置 source.base_url 或 SOURCE_BASE_URL')
+            key = _project_key(project)
+        except Exception as exc:
+            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            errors.append(f'项目 #{number}: {detail}')
+            continue
+        previous = old_cache.get('items', {}).get(key, {})
+        try:
             if project.get('repo'):
                 resolved = resolve_github(project, timeout)
             else:
                 url = https_url(project['url'])
                 resolved = {'url': url, 'key': 'direct:' + hashlib.sha256(url.encode()).hexdigest()}
-            previous = old_cache.get('items', {}).get(resolved['key'], {})
             advertised = resolved.get('asset_size')
             if advertised and int(advertised) > maximum:
                 raise ValueError('发行文件超过 max_ipa_mb 限制')
             fingerprint = resolved.get('fingerprint')
             cached = previous.get('metadata', {})
-            if fingerprint and previous.get('fingerprint') == fingerprint and cached:
-                metadata = cached
+            if fingerprint and previous.get('fingerprint') == fingerprint and cached \
+                    and 'iconB64' in previous:
+                metadata = IPAMetadata(cached)
+                if previous.get('iconB64'):
+                    metadata.icon_png = base64.b64decode(previous['iconB64'])
+                    metadata.icon_tint = previous.get('iconTint')
             else:
                 metadata = download_metadata(resolved['url'], maximum, timeout)
             if metadata['size'] > maximum:
-                raise ValueError('IPA 超过当前 max_ipa_mb 限制')
+                raise ConfigFailure('IPA 超过当前 max_ipa_mb 限制')
             if advertised is not None and int(advertised) != metadata['size']:
                 raise ValueError('IPA 实际大小与 GitHub 发行资产记录不符')
+        except ConfigFailure as exc:
+            errors.append(f'项目 #{number}: {exc}')
+            continue
+        except Exception as exc:
+            # Upstream/network failure. If this project published fine
+            # before, keep its last-good entry and say so loudly instead of
+            # blocking every other app in the source. Without a last-good
+            # entry there is nothing honest to publish: stay fatal.
+            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            stale_app = previous.get('app')
+            if not stale_app:
+                errors.append(f'项目 #{number}: {detail}')
+                continue
+            bundle = stale_app['bundleIdentifier']
+            if bundle in bundle_ids:
+                errors.append(f'项目 #{number}: 源中出现重复 Bundle ID，请只保留一个发行渠道')
+                continue
+            bundle_ids.add(bundle)
+            apps.append(copy.deepcopy(stale_app))
+            stale_status = copy.deepcopy(previous.get('status') or {
+                'name': stale_app['name'], 'bundleIdentifier': bundle,
+                'version': stale_app['version'],
+                'buildVersion': stale_app['versions'][0].get('buildVersion'),
+                'sha256': previous.get('sha256'), 'size': stale_app['size'],
+                'projectURL': None, 'releaseTag': None,
+                'downloadURL': stale_app['downloadURL'],
+            })
+            stale_status['stale'] = True
+            status.append(stale_status)
+            new_cache['items'][key] = previous
+            if previous.get('iconB64') and \
+                    stale_app.get('iconURL', '').endswith('/icons/' + bundle + '.png'):
+                icons[bundle] = base64.b64decode(previous['iconB64'])
+            warnings.append(f'项目 #{number}（{bundle}）上游暂时失败，已保留上次成功版本：{detail}')
+            print(f'STALE #{number}: {bundle} ({detail})')
+            continue
+        try:
             app, date = build_app(project, resolved, metadata, base_url, previous)
             bundle = app['bundleIdentifier']
             if bundle in bundle_ids:
-                raise ValueError('源中出现重复 Bundle ID，请只保留一个发行渠道')
-            bundle_ids.add(bundle)
-            apps.append(app)
-            new_cache['items'][resolved['key']] = {
-                'fingerprint': fingerprint, 'metadata': metadata,
-                'date': date, 'sha256': metadata['sha256'],
-            }
-            status.append({
-                'name': app['name'], 'bundleIdentifier': bundle,
-                'version': metadata['version'], 'buildVersion': metadata.get('buildVersion'),
-                'sha256': metadata['sha256'], 'size': metadata['size'],
-                'projectURL': resolved.get('project_url'),
-                'releaseTag': resolved.get('release_tag'),
-                'downloadURL': resolved['url'],
-            })
-            print(f'OK #{number}: {bundle} {metadata["version"]}')
+                raise ConfigFailure('源中出现重复 Bundle ID，请只保留一个发行渠道')
         except Exception as exc:
-            # Don't print arbitrary network exception strings: URLs may contain query secrets.
             detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
             errors.append(f'项目 #{number}: {detail}')
+            continue
+        bundle_ids.add(bundle)
+        apps.append(app)
+        icon_png = getattr(metadata, 'icon_png', None)
+        if icon_png and not project.get('icon_url'):
+            icons[bundle] = icon_png
+        entry_status = {
+            'name': app['name'], 'bundleIdentifier': bundle,
+            'version': metadata['version'], 'buildVersion': metadata.get('buildVersion'),
+            'sha256': metadata['sha256'], 'size': metadata['size'],
+            'projectURL': resolved.get('project_url'),
+            'releaseTag': resolved.get('release_tag'),
+            'downloadURL': resolved['url'],
+        }
+        status.append(entry_status)
+        new_cache['items'][key] = {
+            'fingerprint': fingerprint, 'metadata': dict(metadata),
+            'date': date, 'sha256': metadata['sha256'],
+            'app': app, 'status': entry_status,
+            'iconB64': base64.b64encode(icon_png).decode() if icon_png else None,
+            'iconTint': getattr(metadata, 'icon_tint', None),
+        }
+        print(f'OK #{number}: {bundle} {metadata["version"]}')
     if errors:
         raise ValueError('\n'.join(errors) + '\n本次不写入或发布任何源更新；请修复配置后重试。')
+    for warning in warnings:
+        print('警告：' + warning)
     result = {
         'name': source['name'], 'identifier': source['identifier'],
         'subtitle': source.get('subtitle', ''),
@@ -395,6 +742,7 @@ def generate(config_path, output, cache_path):
         result.update(website=base_url + '/', iconURL=base_url + '/apple-touch-icon-v2.png',
                       sourceURL=base_url + '/source.json')
     # Only public metadata goes in public/. IPA bytes and credentials are never published.
+    write_icons(output, icons)
     write_bundle([(output / 'source.json', result),
                   (output / 'status.json', {'apps': status}),
                   (cache_path, new_cache)])
