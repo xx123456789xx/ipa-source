@@ -39,11 +39,11 @@ jobs:
             ipa-meta-v2-main-
       - name: Validate request, check IPA, and update config
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/add_request.py --event "$GITHUB_EVENT_PATH" --commit
       - name: Comment that validation passed and publication is starting
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           echo "DISPATCH_AFTER=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
@@ -51,13 +51,13 @@ jobs:
       - name: Request source re-publication
         id: dispatch_step
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: python scripts/dispatch_publish.py
       - name: Wait for the publication run to finish
         id: publish_wait
         timeout-minutes: 20
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           run_id=""
           for attempt in $(seq 1 30); do
@@ -76,7 +76,7 @@ jobs:
       - name: Comment the final success state and close
         if: steps.publish_wait.outcome == 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           SOURCE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/source.json
         run: |
@@ -85,14 +85,14 @@ jobs:
       - name: Comment the final failure state
         if: steps.publish_wait.outcome == 'failure'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "❌ 配置已加入，但这次发布没有成功。源仍是上一个版本，没有被破坏；请查看 Actions 里 “Update and publish IPA source” 的运行日志，修复后手动重跑即可。Issue 保持打开，方便跟踪。"
       - name: Report rejected request without leaking data
         if: failure() && steps.dispatch_step.outcome != 'success'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "This request did not complete validation or publication. Check this workflow run's logs; the source may need owner review before retrying. Do not repost private URLs or credentials."
