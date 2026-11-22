@@ -49,7 +49,7 @@ jobs:
             ipa-meta-v2-${{ github.ref_name }}-
       - name: Build source from public releases
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           SOURCE_BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: python scripts/update.py
       - name: Upload Pages artifact
