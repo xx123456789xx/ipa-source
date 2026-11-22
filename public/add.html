@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IPA 应用源">
+<meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https:; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self' https://github.com">
 <title>添加应用 · 我的 IPA 应用源</title>
 <link rel="icon" type="image/png" href="apple-touch-icon-v2.png"><link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-v2.png"><link rel="stylesheet" href="style.css">
@@ -25,7 +29,8 @@
 <label class="check-row"><input id="prerelease" type="checkbox"><span>包含测试版（Release prerelease）</span></label>
 <button class="submit-button" type="submit">继续到 GitHub 确认添加 <span aria-hidden="true">↗</span></button>
 </form>
-<div class="privacy-note"><strong>最后一步会跳到 GitHub。</strong>需要用仓库所有者账号登录，并在那里点一次“提交”。添加请求会以 GitHub Issue 形式公开；自动化只接受账号 <code>xx123456789xx</code> 提交的请求。通过检查后更新仓库并重新发布。不要输入私有链接、密码或令牌。</div>
+<div class="privacy-note"><strong>最后一步会跳到 GitHub。</strong>需要用仓库所有者账号登录，并在那里点一次“提交”。添加请求会以 GitHub Issue 形式公开；自动化只接受仓库所有者本人提交的请求。通过检查后更新仓库并重新发布。不要输入私有链接、密码或令牌。</div>
+<div class="privacy-note"><strong>关于登录态：</strong>本页是静态页面，存不了 GitHub 登录，也读不到 github.com 的登录状态——登录只保存在你浏览器的 GitHub Cookie 里。所以请<strong>用 Safari 打开本页</strong>（不要用 App 内置浏览器，它的登录态是独立的、关掉就没），并把源首页“添加到主屏幕”，以后都从主屏幕图标进：GitHub 在 Safari 里登录一次后会长期保持，未登录时也会在登录后自动跳回预填好的提交页。提交成功后回源首页，这里会显示最终的成功状态。</div>
 <p class="notice" id="form-message" role="status"></p>
 </section>
 <footer><a href="./">← 返回应用源首页</a><span>每次添加都进行格式与 IPA 检查</span></footer>
