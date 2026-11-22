@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +31,11 @@ class RequestParsingTests(unittest.TestCase):
         for actor,author in [('other','xx123456789xx'),('xx123456789xx','other'),('OTHER','xx123456789xx')]:
             with self.subTest(actor=actor,author=author),self.assertRaises(ValueError):
                 module.parse_request(event(actor=actor,author=author))
+    def test_owner_can_come_from_environment(self):
+        with mock.patch.dict(os.environ,{'IPA_SOURCE_OWNER':'someone'}):
+            self.assertEqual(module.parse_request(event(actor='someone',author='someone'))['repo'],'example/app')
+            with self.assertRaises(ValueError):
+                module.parse_request(event())
     def test_title_must_match_exactly(self):
         with self.assertRaises(ValueError): module.parse_request(event(title='[IPA Source] Add project evil'))
     def test_request_prefix_required(self):
