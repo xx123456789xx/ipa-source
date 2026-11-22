@@ -1,5 +1,7 @@
 # 个人 IPA 聚合源 · 空白模板
 
+> v1.3 变更：自动从 IPA 提取应用图标（含苹果 CgBI 压缩 PNG 的还原）；发行说明不再兼任应用描述；单个项目上游失败时保留其上次成功条目、不再拖停整源；所有者不再写死（从 GitHub Actions 上下文 / 环境变量读取）；添加应用后有明确的成功状态（Issue 最终留言 + 源首页横幅）。详见 VALIDATION.md 的 v1.3 记录。
+
 一个 Python 标准库实现的 IPA 源生成器：**GitHub Releases / 公开 IPA 直链 → 一个 source.json → GitHub Pages → LiveContainer / SideStore 等支持的源阅读器**。
 
 初始 `projects: []`，不预置或推荐任何应用。不下载、不安装、不运行任何实际第三方 IPA。图标为本模板自制。
@@ -39,9 +41,13 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 
 打开首页点 **“添加应用 +”**，粘贴公开 GitHub 仓库 / Release 地址，或免登录 `.ipa` 直链；可填写 IPA 文件名匹配规则和是否包含测试版。点继续后会跳转到 GitHub 的预填 Issue 页面，核对内容并点一次 **Submit new issue** 才会触发处理。
 
-为避免把仓库写入令牌暴露在网页，这个静态表单不直接写 GitHub。请求以公开 Issue 提交（请求中的 URL 会在公开仓库可见），自动化只接受仓库所有者 `xx123456789xx` 自己提交的指定格式；访客即使能创建其他 Issue，也不能触发源配置写入。需要已登录 GitHub、仓库 Issues 功能可用。
+为避免把仓库写入令牌暴露在网页，这个静态表单不直接写 GitHub。请求以公开 Issue 提交（请求中的 URL 会在公开仓库可见），自动化只接受仓库所有者本人（所有者身份从 GitHub 事件上下文读取，不写死用户名）提交的指定格式；访客即使能创建其他 Issue，也不能触发源配置写入。需要已登录 GitHub、仓库 Issues 功能可用。
 
 工作流先验证地址、Release 中是否有匹配 IPA、实际 IPA 包元数据和整个候选源；任一步不通过都不改配置。成功后机器人追加到 `config.json`、触发源重新发布、在 Issue 留言并关闭。直接链接仅接受无需登录且不带查询令牌的公开 `.ipa` URL。刷新 LiveContainer 的固定源即可查看新条目。
+
+**成功状态（v1.3）**：添加不再只有一句“已请求发布”。Issue 里会先有 ⏳ 处理中留言，添加工作流会等发布工作流真正跑完，再给出最终留言：✅ 添加成功（含订阅地址）才关 Issue；❌ 发布失败则 Issue 保持打开并说明源未被破坏。同时，提交前添加页会把这次提交记在本机浏览器里，回到源首页后首页会轮询 `source.json`，应用真出现时显示“✅ 添加成功”横幅——提交成功不等于发布成功，以这两个最终状态为准。
+
+**GitHub 登录态（v1.3 说明）**：静态页面无法保存 GitHub 登录、也读不到 github.com 的 Cookie，登录只存在于浏览器自身。请用 Safari 打开源首页并“添加到主屏幕”，以后从主屏幕图标进入（App 内置浏览器的登录态是独立的、关掉即失）；GitHub 在 Safari 登录一次后会长期保持，未登录时提交跳转也会在登录后自动回到预填的 Issue 页。要做到完全免登录添加，需要带后端的 GitHub App / OAuth 服务，不在本静态模板范围内。
 
 > 手动添加仍可通过直接编辑 `config.json` 的 `projects` 数组，后续 Actions 会自动发布。没有 GitHub 账号时，不能从静态网页获得写入仓库的权限。
 
@@ -86,7 +92,7 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 | `developer_name` | 自定义开发者显示名；不等于作者身份验证 |
 | `description` | 自定义源中描述 |
 | `bundle_identifier` | 可选锁定期望的 Bundle ID；不匹配则拒绝发布 |
-| `icon_url` | 公开 HTTPS PNG/JPEG 图标地址；不填使用本源通用图标 |
+| `icon_url` | 公开 HTTPS PNG/JPEG 图标地址；不填时自动提取 IPA 内置图标，再失败才用本源通用图标 |
 | `enabled` | 设为 `false` 暂停收录，下一次成功发布时移出源 |
 | `app_permissions` | 可选的真实权限声明，含 `entitlements` / `privacy` 两个数组；原样输出为 `appPermissions`，结构与内容须遵循客户端官方规范。脚本只校验外层，不认证准确性 |
 
@@ -95,6 +101,9 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 ## 四、更新、缓存与失败处理
 
 - 脚本读取上游 IPA 的 `CFBundleIdentifier`、版本号、构建号、最低 iOS 版本，并计算实际字节大小与 SHA-256。版本号**不靠猜 Release tag**。
+- 图标（v1.3）：下载 IPA 时顺带提取 `.app` 内声明的最大应用图标，发布到 `public/icons/<Bundle ID>.png`，并按图标平均色生成 `tintColor`。苹果 CgBI 压缩 PNG（原始 deflate、BGRA 预乘）会用标准库解码还原为普通 PNG；图标只在 `Assets.car` 里、没有散装 PNG 的应用提取不到，自动回退源图标，`icon_url` 手动指定仍优先。图标随元数据一起进缓存（base64），缓存命中时不重复下载 IPA 也能重新发布图标。
+- 描述（v1.3）：Release 发行说明只写入版本说明 `versionDescription`，不再整段塞进应用描述；应用描述用项目自定义 `description`，缺省为一句固定说明。
+- 单项目失败（v1.3）：某个项目上游暂时失败（无发行版、下载失败等）时，若它以前成功发布过，保留其上次条目并在 `status.json` 标 `stale: true`、在日志打印警告，不再拖停整源；从没成功过的新项目失败仍会阻止发布。维护者配置错误（Bundle ID 锁定不符、重复 Bundle ID、权限声明格式错、超限额）永远是致命错误，不会被回退掩盖。
 - 下载只用于元数据读取：临时文件结束后释放，不解压到目录、不安装、不执行。实际客户端下载仍直接访问上游，不镜像 IPA。
 - GitHub 发行资产按 ID / 更新时间 / 大小 / URL 缓存元数据；相同资产一般不重复下载。缓存失效、被清理或上游替换资产时会重新下载。
 - 直链可能在同一 URL 替换内容，所以**每次检查都重新下载**。大包建议用 GitHub Releases，避免每半小时消耗流量。
@@ -145,6 +154,7 @@ scripts/make_icon.py               自制 PNG 图标生成器
 .github/workflows/publish.yml      定时检查与 Pages 发布
 .github/workflows/add-ipa.yml      所有者请求验证、写配置、触发发布
 public/                            待发布静态站点与源
+  icons/                           生成时从 IPA 提取的应用图标（按 Bundle ID 命名）
   source.json                      客户端订阅这个文件
   status.json                      公开文件指纹与上游信息
   index.html / style.css / app.js   首页展示与订阅地址复制
