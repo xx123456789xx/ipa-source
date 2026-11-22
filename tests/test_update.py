@@ -439,7 +439,7 @@ class GenerationTests(OfflineCase):
         self.assertEqual(result['news'], [])
         self.assertEqual(result['sourceURL'], BASE + '/source.json')
         self.assertEqual(json.loads((self.output / 'status.json').read_text()), {'apps': []})
-        self.assertEqual(self.cache_json(), {'schema': 1, 'items': {}})
+        self.assertEqual(self.cache_json(), {'schema': 2, 'items': {}})
         self.download.assert_not_called()
         self.github.assert_not_called()
 
@@ -560,7 +560,8 @@ class GenerationTests(OfflineCase):
         self.generate()
         self.github.return_value[0]['body'] = 'Updated public notes'
         result = self.generate()
-        self.assertEqual(result['apps'][0]['localizedDescription'], 'Updated public notes')
+        self.assertEqual(result['apps'][0]['versionDescription'], 'Updated public notes')
+        self.assertNotIn('Updated public notes', result['apps'][0]['localizedDescription'])
         self.assertEqual(self.download.call_count, 1)
 
     def test_direct_urls_always_fetch_and_unchanged_content_retains_date(self):
@@ -581,13 +582,13 @@ class GenerationTests(OfflineCase):
 
     def test_corrupt_or_wrong_schema_cache_triggers_download(self):
         self.config['projects'] = [{'repo': 'owner/repo'}]
-        for cache in ['{broken', '{"schema":2,"items":{}}']:
+        for cache in ['{broken', '{"schema":1,"items":{}}', '{"schema":99,"items":{}}']:
             with self.subTest(cache=cache):
                 self.cache.write_text(cache)
                 previous_calls = self.download.call_count
                 self.generate()
                 self.assertEqual(self.download.call_count, previous_calls + 1)
-                self.assertEqual(self.cache_json()['schema'], 1)
+                self.assertEqual(self.cache_json()['schema'], 2)
 
     def test_missing_cached_metadata_triggers_download(self):
         self.config['projects'] = [{'repo': 'owner/repo'}]
@@ -765,6 +766,109 @@ class GenerationTests(OfflineCase):
             with self.assertRaises(OSError):
                 self.generate()
         self.assertEqual(self.contents(), before)
+
+
+
+def solid_png(width, height, rgba):
+    return update.encode_png_rgba(width, height, bytearray(bytes(rgba) * (width * height)))
+
+
+def cgbi_png(width, height, rgba):
+    """Build an Apple-crushed PNG: CgBI chunk, raw deflate, BGRA premultiplied, filter 0."""
+    import struct as _struct
+    import zlib as _zlib
+    r, g, b, a = rgba
+    if a != 255:
+        r, g, b = (c * a // 255 for c in (r, g, b))
+    row = b'\x00' + bytes((b, g, r, a)) * width
+    compressor = _zlib.compressobj(9, _zlib.DEFLATED, -15)
+    idat = compressor.compress(row * height) + compressor.flush()
+    def chunk(kind, payload):
+        return (_struct.pack('>I', len(payload)) + kind + payload +
+                _struct.pack('>I', _zlib.crc32(kind + payload) & 0xFFFFFFFF))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'CgBI', b'\x00\x00\x00\x00') +
+            chunk(b'IHDR', _struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) +
+            chunk(b'IDAT', idat) + chunk(b'IEND', b''))
+
+
+def ipa_with_icon(icon_bytes, icon_name='AppIcon60x60@2x.png'):
+    info = dict(PLIST, CFBundleIcons={'CFBundlePrimaryIcon': {
+        'CFBundleIconFiles': ['AppIcon60x60'], 'CFBundleIconName': 'AppIcon'}})
+    entries = [('Payload/Synthetic.app/Info.plist', plistlib.dumps(info)),
+               ('Payload/Synthetic.app/' + icon_name, icon_bytes)]
+    return make_ipa(entries=entries)
+
+
+class IconTests(GenerationTests):
+    def test_icon_extracted_published_and_tinted(self):
+        self.blob = ipa_with_icon(solid_png(4, 4, (255, 0, 0, 255)))
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['iconURL'], BASE + '/icons/org.example.app.png')
+        self.assertEqual(app['tintColor'], 'FF0000')
+        written = (self.output / 'icons' / 'org.example.app.png').read_bytes()
+        width, height, pixels = update.decode_png_rgba(written)
+        self.assertEqual((width, height), (4, 4))
+        self.assertEqual(bytes(pixels[:4]), bytes((255, 0, 0, 255)))
+
+    def test_largest_icon_candidate_wins(self):
+        info = dict(PLIST, CFBundleIcons={'CFBundlePrimaryIcon': {
+            'CFBundleIconFiles': ['AppIcon60x60'], 'CFBundleIconName': 'AppIcon'}})
+        entries = [('Payload/Synthetic.app/Info.plist', plistlib.dumps(info)),
+                   ('Payload/Synthetic.app/AppIcon60x60.png', solid_png(2, 2, (0, 0, 255, 255))),
+                   ('Payload/Synthetic.app/AppIcon60x60@2x.png', solid_png(4, 4, (255, 0, 0, 255)))]
+        self.blob = make_ipa(entries=entries)
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        self.assertEqual(self.generate()['apps'][0]['tintColor'], 'FF0000')
+
+    def test_cgbi_icon_normalised_to_standard_png(self):
+        self.blob = ipa_with_icon(cgbi_png(4, 4, (0, 255, 0, 255)))
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['tintColor'], '00FF00')
+        written = (self.output / 'icons' / 'org.example.app.png').read_bytes()
+        self.assertNotIn(b'CgBI', written)
+        _w, _h, pixels = update.decode_png_rgba(written)
+        self.assertEqual(bytes(pixels[:4]), bytes((0, 255, 0, 255)))
+
+    def test_no_icon_falls_back_to_source_icon(self):
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['iconURL'], BASE + '/apple-touch-icon-v2.png')
+        self.assertFalse((self.output / 'icons').exists())
+
+    def test_explicit_icon_url_wins_and_no_file_written(self):
+        self.blob = ipa_with_icon(solid_png(4, 4, (255, 0, 0, 255)))
+        self.config['projects'] = [{'url': DOWNLOAD, 'icon_url': 'https://images.example/icon.png'}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['iconURL'], 'https://images.example/icon.png')
+        self.assertFalse((self.output / 'icons' / 'org.example.app.png').exists())
+
+
+class StaleFallbackTests(GenerationTests):
+    def test_failed_upstream_keeps_last_good_entry(self):
+        self.config['projects'] = [{'repo': 'owner/repo'}]
+        first = self.generate()
+        self.github.return_value = []
+        result = self.generate()
+        self.assertEqual(result['apps'], first['apps'])
+        status = json.loads((self.output / 'status.json').read_text())['apps'][0]
+        self.assertTrue(status['stale'])
+        self.assertEqual(self.download.call_count, 1)
+
+    def test_failed_upstream_without_history_stays_fatal(self):
+        self.config['projects'] = [{'repo': 'owner/repo'}]
+        self.github.return_value = []
+        with self.assertRaises(ValueError):
+            self.generate()
+        self.assertEqual(self.contents(), {})
+
+    def test_config_mistake_is_not_masked_by_fallback(self):
+        self.config['projects'] = [{'repo': 'owner/repo'}]
+        self.generate()
+        self.config['projects'][0]['bundle_identifier'] = 'org.example.other'
+        with self.assertRaisesRegex(ValueError, 'Bundle ID'):
+            self.generate()
 
 
 if __name__ == '__main__':
