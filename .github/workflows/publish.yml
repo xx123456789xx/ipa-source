@@ -44,12 +44,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/metadata.json
-          key: ipa-meta-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ipa-meta-v2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ipa-meta-v1-${{ github.ref_name }}-
+            ipa-meta-v2-${{ github.ref_name }}-
       - name: Build source from public releases
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: python scripts/update.py
       - name: Upload Pages artifact
