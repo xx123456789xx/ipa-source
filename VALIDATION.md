@@ -35,3 +35,11 @@
 - 工作流权限精确设定 `contents: write` / `actions: write` / `issues: write`；不向 Pages 注入 PAT。公开直接 IPA 仅接受 HTTPS、`.ipa` 直链，不接受含 query/fragment 的临时签名地址；GitHub 仓库则检查发布资产、实际 IPA 元数据与 Bundle ID。
 - 手机 Safari 上的 GitHub issue URL 预填交互、正式 Issue 创建回路和真实有效 IPA 端到端尚未操作验证；用户可用自己的公开测试 Release 触发真实测试。部署工作流 YAML 和 owner gate 已静态解析校验通过；99 个本地离线测试全部通过。
 - 安全模型仅支持该仓库所有者提交；Issue 是公开的且要求 GitHub 登录。不要输入秘密 URL 或登录凭据。
+
+
+## v1.3 优化验证 · 2026-11-23
+
+- 离线测试增至 **178 个，全部通过**（新增子类复跑生成契约；新增图标提取、最大图标选择、CgBI 还原、回退源图标、手动图标优先、上游失败保留上次条目、无历史时仍致命、配置错误不被回退掩盖、所有者从环境变量读取等用例）。
+- 用线上真实 IPA 端到端实测（cilicili 1.1.7 与 WQ Files 0.9.20，走真实 GitHub API 与下载）：两枚图标均成功提取并目视核对无误——cilicili 为 CgBI 压缩图标，还原后粉色电视机图标颜色正确；WQ Files 为普通 PNG。`iconURL` 指向 `icons/<Bundle ID>.png`，`tintColor` 分别为图标平均色 F677A9 / 3E81A0；应用描述由 882 / 3075 字发行说明瘦身为固定短说明，`source.json` 由约 13 KB 降至约 7.2 KB。第二次运行命中缓存约 4 秒完成、不重复下载，图标照常发布。
+- `node --check public/app.js / add.js` 通过；两个工作流 YAML 解析通过；代码中剩余的用户名仅为非 Actions 环境下的文档化回退默认值，运行路径均从 `GITHUB_REPOSITORY` / `GITHUB_REPOSITORY_OWNER` / 页面自身地址推导。
+- 未验证：添加工作流的“等待发布并回最终留言”与首页待确认横幅未在真实仓库端到端跑过（需在部署后用一次真实添加验收）；图标只在 Assets.car 的应用仍回退源图标。
