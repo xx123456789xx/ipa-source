@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IPA 应用源">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https:; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'">
 <title>我的 IPA 应用源</title>
@@ -20,10 +23,11 @@
 <label class="url-label" for="source-url">源地址 · 在支持的客户端中手动添加</label>
 <input id="source-url" type="text" readonly aria-label="源订阅地址" value="部署后生成 HTTPS 地址">
 <p class="notice" id="message" role="status">正在读取源配置…</p>
+<p class="notice add-status" id="add-status" role="status" hidden></p>
 </section>
 <section class="collection"><div class="section-heading"><h2>应用列表</h2><span id="count">—</span></div><div id="apps"></div></section>
 <section class="notes"><div><span class="number">01</span><h3>跟随上游发行</h3><p>定时检查公开 Release，链接直接指向上游 IPA，不二次修改安装包。</p></div><div><span class="number">02</span><h3>源更新 ≠ 自动安装</h3><p>客户端需要刷新订阅；下载、安装和签名仍由客户端处理。</p></div><div><span class="number">03</span><h3>保持安全边界</h3><p>收录不是安全认证。请只添加信任的应用，兼容性以实机为准。</p></div></section>
-<footer><span>PERSONAL IPA SOURCE · v1.0</span><span>无统计代码 · 无账号登录</span></footer>
+<footer><span>PERSONAL IPA SOURCE · v1.3</span><span>无统计代码 · 无账号登录</span></footer>
 </main>
 <template id="card"><article class="app-card"><img class="app-icon" width="56" height="56" loading="lazy" alt=""><div class="app-info"><h3></h3><p class="app-id"></p><p class="app-meta"></p></div><a class="download" rel="noopener noreferrer" target="_blank">IPA ↗</a></article></template>
 </body></html>
