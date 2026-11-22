@@ -10,5 +10,12 @@
     "max_ipa_mb": 1024,
     "request_timeout_seconds": 90
   },
-  "projects": []
+  "projects": [
+    {
+      "repo": "Rone89/cilicili",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": true,
+      "enabled": true
+    }
+  ]
 }
