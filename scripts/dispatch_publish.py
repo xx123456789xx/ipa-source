@@ -8,8 +8,10 @@ import urllib.request
 TOKEN=os.environ.get('GH_TOKEN')
 if not TOKEN:
     raise SystemExit('Workflow token is missing')
-url='https://api.github.com/repos/xx123456789xx/ipa-source/actions/workflows/publish.yml/dispatches'
-body=json.dumps({'ref':'main'}).encode()
+REPO=os.environ.get('GITHUB_REPOSITORY') or 'xx123456789xx/ipa-source'
+REF=os.environ.get('GITHUB_REF_NAME') or 'main'
+url=f'https://api.github.com/repos/{REPO}/actions/workflows/publish.yml/dispatches'
+body=json.dumps({'ref':REF}).encode()
 request=urllib.request.Request(url,body,{
     'Authorization':'Bearer '+TOKEN,
     'Accept':'application/vnd.github+json',
