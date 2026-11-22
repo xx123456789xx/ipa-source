@@ -14,16 +14,33 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import update
 
 ROOT=Path(__file__).resolve().parent.parent
-OWNER='xx123456789xx'
+DEFAULT_OWNER='xx123456789xx'
 TITLE='[IPA Source] Add project'
 PREFIX='IPA_SOURCE_REQUEST_V1'
+
+
+def owner():
+    """Repository owner, resolved without hardcoding a username.
+
+    GitHub Actions provides GITHUB_REPOSITORY_OWNER / GITHUB_REPOSITORY on
+    every run; IPA_SOURCE_OWNER overrides locally. The default only keeps
+    the original author's deployment working outside Actions.
+    """
+    explicit=os.environ.get('IPA_SOURCE_OWNER')
+    if explicit: return explicit
+    actions_owner=os.environ.get('GITHUB_REPOSITORY_OWNER')
+    if actions_owner: return actions_owner
+    repository=os.environ.get('GITHUB_REPOSITORY') or ''
+    if '/' in repository: return repository.split('/',1)[0]
+    return DEFAULT_OWNER
 
 
 def parse_request(event):
     issue=event.get('issue') or {}
     actor=(event.get('sender') or {}).get('login','')
     author=(issue.get('user') or {}).get('login','')
-    if actor.lower()!=OWNER.lower() or author.lower()!=OWNER.lower():
+    expected=owner()
+    if actor.lower()!=expected.lower() or author.lower()!=expected.lower():
         raise ValueError('Only the repository owner may add source entries')
     if issue.get('title')!=TITLE:
         raise ValueError('Unexpected request title')
