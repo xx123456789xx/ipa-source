@@ -15,19 +15,22 @@
       "repo": "Rone89/cilicili",
       "asset_pattern": "*.ipa",
       "include_prereleases": true,
-      "enabled": true
+      "enabled": true,
+      "subtitle": "B站第三方客户端"
     },
     {
       "repo": "kolbicz/WQFiles",
       "asset_pattern": "*.ipa",
       "include_prereleases": true,
-      "enabled": true
+      "enabled": true,
+      "subtitle": "文件浏览与应用数据管理工具"
     },
     {
       "repo": "CKopoer/BiliSail",
       "asset_pattern": "*.ipa",
       "include_prereleases": true,
-      "enabled": true
+      "enabled": true,
+      "subtitle": "B站第三方客户端 · 专注观看体验"
     }
   ]
 }
