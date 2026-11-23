@@ -91,6 +91,7 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 | `name` | 自定义显示名；省略则读 IPA 的 Info.plist |
 | `developer_name` | 自定义开发者显示名；不等于作者身份验证 |
 | `description` | 自定义源中描述 |
+| `subtitle` | 自定义应用副标题（客户端列表里版本下方的一行简介）；不填时自动取 GitHub 仓库简介并清洗（多语言用 \| 分隔时优先中文段，最长约 48 字）；填空字符串则不显示副标题 |
 | `bundle_identifier` | 可选锁定期望的 Bundle ID；不匹配则拒绝发布 |
 | `icon_url` | 公开 HTTPS PNG/JPEG 图标地址；不填时自动提取 IPA 内置图标，再失败才用本源通用图标 |
 | `enabled` | 设为 `false` 暂停收录，下一次成功发布时移出源 |
