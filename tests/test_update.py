@@ -834,7 +834,7 @@ class IconTests(GenerationTests):
     def test_no_icon_falls_back_to_source_icon(self):
         self.config['projects'] = [{'url': DOWNLOAD}]
         app = self.generate()['apps'][0]
-        self.assertEqual(app['iconURL'], BASE + '/apple-touch-icon-v2.png')
+        self.assertEqual(app['iconURL'], BASE + '/AltStore-Gallery.png')
         self.assertFalse((self.output / 'icons').exists())
 
     def test_explicit_icon_url_wins_and_no_file_written(self):
