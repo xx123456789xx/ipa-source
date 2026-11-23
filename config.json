@@ -31,6 +31,12 @@
       "include_prereleases": true,
       "enabled": true,
       "subtitle": "B站第三方客户端 · 专注观看体验"
+    },
+    {
+      "repo": "81199000/GuoDuo",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": false,
+      "enabled": true
     }
   ]
 }
