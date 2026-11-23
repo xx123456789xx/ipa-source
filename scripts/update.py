@@ -465,7 +465,7 @@ def build_app(project, resolved, metadata, base_url, previous=None):
     elif icon_png and base_url:
         icon = base_url + '/icons/' + metadata['bundleIdentifier'] + '.png'
     elif base_url:
-        icon = base_url + '/apple-touch-icon-v2.png'
+        icon = base_url + '/AltStore-Gallery.png'
     else:
         icon = ''
     if not icon:
@@ -739,7 +739,7 @@ def generate(config_path, output, cache_path):
         'description': source.get('description', ''), 'apps': apps, 'news': [],
     }
     if base_url:
-        result.update(website=base_url + '/', iconURL=base_url + '/apple-touch-icon-v2.png',
+        result.update(website=base_url + '/', iconURL=base_url + '/AltStore-Gallery.png',
                       sourceURL=base_url + '/source.json')
     # Only public metadata goes in public/. IPA bytes and credentials are never published.
     write_icons(output, icons)
