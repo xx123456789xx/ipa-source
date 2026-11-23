@@ -255,11 +255,25 @@ class ReleaseTests(OfflineCase):
         self.assertEqual(len(update.pick_release([release(body='a' * 13000)], {})['description']), 12000)
 
     def test_resolve_uses_bounded_public_api_and_stable_key(self):
-        with mock.patch.object(update, 'github_json', return_value=[release()]) as get:
+        with mock.patch.object(update, 'github_json',
+                               side_effect=[[release()], {'description': 'Demo app'}]) as get:
             resolved = update.resolve_github({'repo': 'a/b'}, 14)
-        get.assert_called_once_with('https://api.github.com/repos/a/b/releases?per_page=100', 14)
+        self.assertEqual(get.call_count, 2)
+        get.assert_any_call('https://api.github.com/repos/a/b/releases?per_page=100', 14)
+        get.assert_any_call('https://api.github.com/repos/a/b', 14)
         self.assertEqual(resolved['key'], 'github:a/b')
         self.assertEqual(resolved['project_url'], 'https://github.com/a/b')
+        self.assertEqual(resolved['repo_description'], 'Demo app')
+
+    def test_resolve_tolerates_repo_info_failure(self):
+        with mock.patch.object(update, 'github_json',
+                               side_effect=[[release()], ValueError('boom')]):
+            resolved = update.resolve_github({'repo': 'a/b'}, 14)
+        self.assertNotIn('repo_description', resolved)
+        with mock.patch.object(update, 'github_json',
+                               side_effect=[[release()], ['not-a-dict']]):
+            resolved = update.resolve_github({'repo': 'a/b'}, 14)
+        self.assertNotIn('repo_description', resolved)
 
     def test_bad_api_shape_rejected(self):
         with mock.patch.object(update, 'github_json', return_value={'message': 'not a list'}):
@@ -542,7 +556,9 @@ class GenerationTests(OfflineCase):
         self.config['projects'] = [{'repo': 'owner/repo'}]
         first = self.generate()
         self.generate()
-        self.assertEqual(self.github.call_count, 2)
+        # Two API calls per run: releases plus the repo-info lookup used
+        # for the derived subtitle. The IPA itself is downloaded once.
+        self.assertEqual(self.github.call_count, 4)
         self.assertEqual(self.download.call_count, 1)
         self.assertEqual(first, json.loads((self.output / 'source.json').read_text()))
         item = self.cache_json()['items']['github:owner/repo']
@@ -843,6 +859,68 @@ class IconTests(GenerationTests):
         app = self.generate()['apps'][0]
         self.assertEqual(app['iconURL'], 'https://images.example/icon.png')
         self.assertFalse((self.output / 'icons' / 'org.example.app.png').exists())
+
+
+class SubtitleTests(GenerationTests):
+    def generate_with_description(self, description, project_extra=None):
+        project = {'repo': 'owner/repo'}
+        if project_extra:
+            project.update(project_extra)
+        self.config['projects'] = [project]
+        releases = [release(assets=[asset(size=len(self.blob))])]
+
+        def fake(url, timeout):
+            if 'releases' in url:
+                return releases
+            return {'description': description}
+
+        with mock.patch.object(update, 'github_json', side_effect=fake):
+            return self.generate()
+
+    def test_auto_subtitle_prefers_cjk_segment(self):
+        result = self.generate_with_description(
+            'A cross-platform Bilibili client | 跨平台B站第三方客户端 - 专注观看体验')
+        self.assertEqual(result['apps'][0]['subtitle'],
+                         '跨平台B站第三方客户端 - 专注观看体验')
+
+    def test_auto_subtitle_english_passthrough(self):
+        result = self.generate_with_description(
+            'File browser and cache cleaner for iOS')
+        self.assertEqual(result['apps'][0]['subtitle'],
+                         'File browser and cache cleaner for iOS')
+
+    def test_no_description_no_subtitle_key(self):
+        result = self.generate_with_description('')
+        self.assertNotIn('subtitle', result['apps'][0])
+        # Default mock returns a list for the repo-info call too.
+        self.config['projects'] = [{'repo': 'owner/repo'}]
+        result = self.generate()
+        self.assertNotIn('subtitle', result['apps'][0])
+
+    def test_explicit_subtitle_wins_over_derived(self):
+        result = self.generate_with_description(
+            'Upstream words', {'subtitle': '手写简介'})
+        self.assertEqual(result['apps'][0]['subtitle'], '手写简介')
+
+    def test_explicit_empty_subtitle_suppresses(self):
+        result = self.generate_with_description(
+            'Upstream words', {'subtitle': ''})
+        self.assertNotIn('subtitle', result['apps'][0])
+
+    def test_invalid_subtitle_rejected(self):
+        self.config['projects'] = [{'repo': 'owner/repo', 'subtitle': 5}]
+        with self.assertRaises(ValueError):
+            self.generate()
+
+    def test_clean_subtitle_units(self):
+        self.assertEqual(update.clean_subtitle(None), '')
+        self.assertEqual(update.clean_subtitle('  '), '')
+        self.assertEqual(update.clean_subtitle('Cool app https://example.com/x now'),
+                         'Cool app now')
+        long_text = '这是一个非常长的仓库简介，用来验证副标题的截断逻辑是否正确工作，超过四十八个字以后应该被截断并加上省略号表示还有后续内容'
+        cleaned = update.clean_subtitle(long_text)
+        self.assertTrue(cleaned.endswith('…'))
+        self.assertLessEqual(len(cleaned), 49)
 
 
 class StaleFallbackTests(GenerationTests):
