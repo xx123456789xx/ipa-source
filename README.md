@@ -159,7 +159,7 @@ public/                            待发布静态站点与源
   status.json                      公开文件指纹与上游信息
   index.html / style.css / app.js   首页展示与订阅地址复制
   add.html / add.js                 手机粘贴项目地址表单
-  apple-touch-icon-v2.png           iPhone 主屏幕与网页品牌图标
+  AltStore-Gallery.png           iPhone 主屏幕与网页品牌图标
   icon.png                          通用源图标
 tests/                              离线回归测试
 ```
