@@ -22,6 +22,12 @@
       "asset_pattern": "*.ipa",
       "include_prereleases": true,
       "enabled": true
+    },
+    {
+      "repo": "CKopoer/BiliSail",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": true,
+      "enabled": true
     }
   ]
 }
