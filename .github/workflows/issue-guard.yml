@@ -1,0 +1,25 @@
+name: Issue guard for add requests
+
+on:
+  issues:
+    types: [opened]
+
+# The add workflow only ever runs for the repository owner. This guard keeps
+# the issue list clean: an add request opened by anyone else gets a short
+# explanation and is closed immediately. It cannot touch repository contents.
+permissions:
+  issues: write
+
+jobs:
+  close-foreign-request:
+    if: github.event.issue.title == '[IPA Source] Add project' && github.event.issue.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close the request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "本源只接受仓库主人添加应用，这条请求已自动关闭。This source only accepts app additions from the repository owner, so this request has been closed automatically."
+          gh issue close "$ISSUE_NUMBER" --reason not_planned
