@@ -151,7 +151,48 @@ def resolve_github(project, timeout):
     resolved = pick_release(data, project)
     resolved['project_url'] = 'https://github.com/' + repo
     resolved['key'] = 'github:' + repo
+    # Best effort: the repo's own one-line description becomes the app's
+    # subtitle (cleaned in build_app). Cosmetic only -- any failure here
+    # just leaves the app without a derived subtitle, never blocks it.
+    try:
+        info = github_json(f'https://api.github.com/repos/{repo}', timeout)
+        if isinstance(info, dict):
+            resolved['repo_description'] = str(info.get('description') or '')
+    except Exception:
+        pass
     return resolved
+
+
+def clean_subtitle(text):
+    """One-line app subtitle derived from an upstream repo description.
+
+    Cosmetic only: anything unusable becomes ''. When a description
+    mixes languages in '|'-separated segments, the first segment
+    containing CJK wins -- that is the segment this source's readers
+    can actually read. Long text is cut at a separator when possible.
+    """
+    if not isinstance(text, str):
+        return ''
+    text = re.sub(r'https?://\S+', '', text)
+    text = ' '.join(text.split())
+    if not text:
+        return ''
+    segments = [s.strip(' -—·') for s in text.split('|')]
+    segments = [s for s in segments if s]
+    if not segments:
+        return ''
+    chosen = next((s for s in segments
+                   if re.search('[一-鿿]', s)), segments[0])
+    chosen = chosen.strip(' 。.!！?？')
+    if len(chosen) > 48:
+        cut = chosen[:48]
+        for sep in ('·', '，', '、', ',', ' '):
+            idx = cut.rfind(sep)
+            if idx >= 20:
+                cut = cut[:idx]
+                break
+        chosen = cut.rstrip(' 。.!！?？·，、,') + '…'
+    return chosen
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +545,19 @@ def build_app(project, resolved, metadata, base_url, previous=None):
         'downloadURL': resolved['url'],
         'size': metadata['size'],
     }
+    subtitle = project.get('subtitle')
+    if subtitle is not None:
+        # Maintainer-written subtitle wins over the derived one; an
+        # explicit empty string suppresses the subtitle entirely.
+        if not isinstance(subtitle, str):
+            raise ConfigFailure('subtitle 必须是字符串')
+        subtitle = ' '.join(subtitle.split())
+        if len(subtitle) > 80:
+            raise ConfigFailure('subtitle 过长（最多 80 字）')
+    else:
+        subtitle = clean_subtitle(resolved.get('repo_description'))
+    if subtitle:
+        app['subtitle'] = subtitle
     if 'app_permissions' in project:
         permissions = project['app_permissions']
         if not isinstance(permissions, dict) or not all(
