@@ -12,7 +12,7 @@
 - GitHub Actions 计划每 **30 分钟**检查一次，可手动运行；调度不是实时推送，可能排队、延迟。客户端也需要刷新源，**不会自动替换已安装 App**。
 - 仅支持**公开发行的 IPA 文件**。只有源码、需登录下载、私有 Releases、GitHub Actions 临时构建产物不在本模板范围。
 - 生成 AltStore 风格 JSON，并保留旧式单版本字段；主要针对 LiveContainer 源功能。已静态核对官方 3.8.0 与主分支解析器，空 `apps: []` 可解析，构建号同时输出 `buildNumber` / `buildVersion`。**没有在你的设备上实测**，也不保证所有旧版兼容。
-- AltStore / SideStore 的实际安装还有权限声明等要求。生成器会从 IPA 本体自动派生 `appPermissions`：主程序代码签名中的 entitlements 键（签名缺失时退回内嵌描述文件）加上 Info.plist 隐私用途说明（按 AltStore 权限类型名映射，无法映射的键跳过）。派生是尽力而为，提取失败时不写该字段，客户端会照旧弹出权限警告；维护者也可用 `app_permissions` 显式声明覆盖派生结果。仍需自行在设备上验证安装，不能把“可解析 JSON”等同“跨客户端安装已验证”。
+- AltStore / SideStore 的实际安装还有权限声明等要求。生成器会从 IPA 本体自动派生 `appPermissions`：主程序代码签名中的 entitlements 键（签名缺失时退回内嵌描述文件）加上包内各 Info.plist 的隐私用途说明——隐私部分按客户端现行格式以原始 Info.plist 键名输出为 `{键: 说明}` 对象（旧式类型名数组无法表达 `NFCReaderUsageDescription` 等键名、还会把 FullAccess 等不同权限并成一个，已弃用）。派生是尽力而为，提取失败时不写该字段，客户端会照旧弹出权限警告；维护者也可用 `app_permissions` 显式声明覆盖派生结果。仍需自行在设备上验证安装，不能把“可解析 JSON”等同“跨客户端安装已验证”。
 - 收录不代表安全审计，也不保证 App 可在 LiveContainer 中运行。不会编译、破解、重签名或修改 IPA。
 
 ## 一、部署到 GitHub Pages
