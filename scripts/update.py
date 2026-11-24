@@ -158,9 +158,54 @@ def resolve_github(project, timeout):
         info = github_json(f'https://api.github.com/repos/{repo}', timeout)
         if isinstance(info, dict):
             resolved['repo_description'] = str(info.get('description') or '')
+            if not clean_subtitle(resolved['repo_description']):
+                # Fallback: many repos leave the description empty but
+                # introduce the app in the README's first paragraph.
+                readme = github_json(
+                    f'https://api.github.com/repos/{repo}/readme', timeout)
+                if isinstance(readme, dict) and readme.get('content'):
+                    text = base64.b64decode(readme['content']).decode(
+                        'utf-8', 'replace')
+                    resolved['readme_subtitle'] = clean_subtitle(
+                        readme_intro(text))
     except Exception:
         pass
     return resolved
+
+
+def readme_intro(text):
+    """First prose paragraph of a README, markdown noise removed.
+
+    Subtitle fallback only: skips headings, badge and image lines, HTML
+    blocks, tables and separators, joins the wrapped lines of the first
+    real paragraph, and returns '' when the README has no prose intro.
+    """
+    if not isinstance(text, str):
+        return ''
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.S)
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            if lines:
+                break
+            continue
+        if line.startswith(('#', '>', '|')) or re.match(r'<h[1-6][\s>]', line, re.I):
+            if lines:
+                break
+            continue
+        # Drop images entirely, keep link text, strip tags and emphasis.
+        # Tag stripping also unwraps one-line HTML blocks such as
+        # <p align="center">intro</p>; pure tag lines strip to ''.
+        plain = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', line)
+        plain = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', plain)
+        plain = re.sub(r'<[^>]+>', '', plain)
+        plain = plain.replace('**', '').replace('__', '').replace('`', '')
+        plain = ' '.join(plain.split())
+        if len(plain) < 4 or not re.search(r'[0-9A-Za-z一-鿿]', plain):
+            continue
+        lines.append(plain)
+    return ' '.join(lines)
 
 
 def clean_subtitle(text):
@@ -556,6 +601,9 @@ def build_app(project, resolved, metadata, base_url, previous=None):
             raise ConfigFailure('subtitle 过长（最多 80 字）')
     else:
         subtitle = clean_subtitle(resolved.get('repo_description'))
+        if not subtitle:
+            # README first-paragraph fallback, derived at resolve time.
+            subtitle = resolved.get('readme_subtitle') or ''
     if subtitle:
         app['subtitle'] = subtitle
     if 'app_permissions' in project:
