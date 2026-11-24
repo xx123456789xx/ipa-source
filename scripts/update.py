@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
 USER_AGENT = 'Personal-IPA-Source/1.3'
-CACHE_SCHEMA = 2
+CACHE_SCHEMA = 3
 DEFAULT_TINT = '4263EB'
 DEFAULT_DESCRIPTION = '公开上游 IPA。收录不代表兼容性或安全认证。'
 
@@ -492,6 +492,173 @@ def inspect_ipa(path):
     return metadata
 
 
+# --- App permissions (AltStore `appPermissions`) ---------------------------
+# AltStore/SideStore compare the permissions an IPA actually requires
+# against the source's declared appPermissions and warn about anything
+# undeclared. Derive the declaration from the IPA itself: entitlement keys
+# from the main executable's code signature (falling back to the embedded
+# provisioning profile) and privacy permissions from Info.plist
+# usage-description keys, mapped to AltStore's permission type names
+# (AltStoreCore/Resources/Permissions.plist). Unknown usage keys have no
+# AltStore type and are skipped, matching what clients can check.
+PRIVACY_PERMISSION_TYPES = {
+    'NSAppleMusicUsageDescription': 'AppleMusic',
+    'NSBluetoothAlwaysUsageDescription': 'BluetoothAlways',
+    'NSBluetoothPeripheralUsageDescription': 'BluetoothPeripheral',
+    'NSCalendarsFullAccessUsageDescription': 'Calendars',
+    'NSCalendarsUsageDescription': 'Calendars',
+    'NSCalendarsWriteOnlyAccessUsageDescription': 'Calendars',
+    'NSCameraUsageDescription': 'Camera',
+    'NSContactsUsageDescription': 'Contacts',
+    'NSFaceIDUsageDescription': 'FaceID',
+    'NSFallDetectionUsageDescription': 'FallDetection',
+    'NSGKFriendListUsageDescription': 'GKFriendList',
+    'NSHealthClinicalHealthRecordsShareUsageDescription':
+        'HealthClinicalHealthRecordsShare',
+    'NSHealthShareUsageDescription': 'HealthShare',
+    'NSHealthUpdateUsageDescription': 'HealthUpdate',
+    'NSHomeKitUsageDescription': 'HomeKit',
+    'NSLocalNetworkUsageDescription': 'LocalNetwork',
+    'NSLocationAlwaysAndWhenInUseUsageDescription': 'LocationAlwaysAndWhenInUse',
+    'NSLocationAlwaysUsageDescription': 'LocationAlways',
+    'NSLocationTemporaryUsageDescription': 'LocationTemporary',
+    'NSLocationUsageDescription': 'Location',
+    'NSLocationWhenInUseUsageDescription': 'LocationWhenInUse',
+    'NSMicrophoneUsageDescription': 'Microphone',
+    'NSMotionUsageDescription': 'Motion',
+    'NSNFCReaderUsageDescription': 'NFCReader',
+    'NSNearbyInteractionAllowOnceUsageDescription': 'NearbyInteractionAllowOnce',
+    'NSNearbyInteractionUsageDescription': 'NearbyInteraction',
+    'NSPhotoLibraryAddUsageDescription': 'PhotoLibraryAdd',
+    'NSPhotoLibraryUsageDescription': 'PhotoLibrary',
+    'NSRemindersFullAccessUsageDescription': 'Reminders',
+    'NSRemindersUsageDescription': 'Reminders',
+    'NSSensorKitUsageDescription': 'SensorKit',
+    'NSSiriUsageDescription': 'Siri',
+    'NSSpeechRecognitionUsageDescription': 'SpeechRecognition',
+    'NSUserTrackingUsageDescription': 'UserTracking',
+}
+
+
+def _superblob_entitlement_keys(blob):
+    keys = set()
+    if len(blob) < 12 or blob[:4] != b'\xfa\xde\x0c\xc0':
+        return keys
+    count = struct.unpack('>I', blob[8:12])[0]
+    for index in range(min(count, 64)):
+        entry = 12 + index * 8
+        if entry + 8 > len(blob):
+            break
+        slot, offset = struct.unpack('>II', blob[entry:entry + 8])
+        if slot != 5 or offset + 8 > len(blob):  # CSSLOT_ENTITLEMENTS
+            continue
+        if blob[offset:offset + 4] != b'\xfa\xde\x71\x71':
+            continue
+        length = struct.unpack('>I', blob[offset + 4:offset + 8])[0]
+        try:
+            parsed = plistlib.loads(blob[offset + 8:offset + length])
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            keys.update(key for key in parsed if isinstance(key, str))
+    return keys
+
+
+def _macho_entitlement_keys(data):
+    """Entitlement keys from one Mach-O (thin or fat) byte string."""
+    keys = set()
+    if len(data) < 4:
+        return keys
+    magic = data[:4]
+    if magic in (b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf'):  # fat, big-endian
+        fat64 = magic == b'\xca\xfe\xba\xbf'
+        nfat = struct.unpack('>I', data[4:8])[0]
+        offset = 8
+        for _ in range(min(nfat, 16)):
+            if fat64:
+                if offset + 32 > len(data):
+                    break
+                start, size = struct.unpack('>QQ', data[offset + 8:offset + 24])
+                offset += 32
+            else:
+                if offset + 20 > len(data):
+                    break
+                start, size = struct.unpack('>II', data[offset + 8:offset + 16])
+                offset += 20
+            keys.update(_macho_entitlement_keys(data[start:start + size]))
+        return keys
+    if magic == b'\xcf\xfa\xed\xfe':  # MH_MAGIC_64, little-endian
+        header = 32
+    elif magic == b'\xce\xfa\xed\xfe':  # MH_MAGIC, little-endian
+        header = 28
+    else:
+        return keys
+    if len(data) < header:
+        return keys
+    ncmds = struct.unpack('<I', data[16:20])[0]
+    offset = header
+    for _ in range(min(ncmds, 512)):
+        if offset + 8 > len(data):
+            break
+        cmd, cmdsize = struct.unpack('<II', data[offset:offset + 8])
+        if cmdsize < 8 or offset + cmdsize > len(data):
+            break
+        if cmd == 0x1d and cmdsize >= 16:  # LC_CODE_SIGNATURE
+            dataoff, datasize = struct.unpack('<II', data[offset + 8:offset + 16])
+            keys.update(_superblob_entitlement_keys(data[dataoff:dataoff + datasize]))
+        offset += cmdsize
+    return keys
+
+
+def _provision_entitlement_keys(data):
+    start = data.find(b'<?xml')
+    end = data.rfind(b'</plist>')
+    if start < 0 or end < 0:
+        return set()
+    try:
+        parsed = plistlib.loads(data[start:end + len(b'</plist>')])
+    except Exception:
+        return set()
+    entitlements = parsed.get('Entitlements') if isinstance(parsed, dict) else None
+    if not isinstance(entitlements, dict):
+        return set()
+    return {key for key in entitlements if isinstance(key, str)}
+
+
+def extract_permissions(archive, app_prefix, info):
+    """Best-effort appPermissions derived from the IPA; None when empty."""
+    privacy, seen = [], set()
+    for key, kind in PRIVACY_PERMISSION_TYPES.items():
+        if kind in seen:
+            continue
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            privacy.append({'name': kind, 'usageDescription': value})
+            seen.add(kind)
+    keys = set()
+    executable = info.get('CFBundleExecutable')
+    if isinstance(executable, str) and executable and '/' not in executable:
+        try:
+            entry = archive.getinfo(app_prefix + executable)
+            if entry.file_size <= 512 * 1024 * 1024:
+                with archive.open(entry) as stream:
+                    keys = _macho_entitlement_keys(stream.read())
+        except (KeyError, OSError, RuntimeError):
+            keys = set()
+    if not keys:
+        try:
+            entry = archive.getinfo(app_prefix + 'embedded.mobileprovision')
+            if entry.file_size <= 16 * 1024 * 1024:
+                with archive.open(entry) as stream:
+                    keys = _provision_entitlement_keys(stream.read())
+        except (KeyError, OSError, RuntimeError):
+            pass
+    if not keys and not privacy:
+        return None
+    return {'entitlements': [{'name': key} for key in sorted(keys)],
+            'privacy': privacy}
+
+
 def download_metadata(url, maximum, timeout):
     digest = hashlib.sha256()
     count = 0
@@ -521,6 +688,19 @@ def download_metadata(url, maximum, timeout):
                     found = extract_icon(archive, metadata.app_prefix, metadata.info)
                 if found is not None:
                     metadata.icon_png, metadata.icon_tint = found
+            except Exception:
+                pass
+            # Same idea for permissions: the IPA is already here, so
+            # deriving the appPermissions declaration costs no traffic.
+            # Best-effort only; any failure leaves the source undeclared
+            # (clients then warn, exactly as before this feature).
+            try:
+                file.seek(0)
+                with zipfile.ZipFile(file) as archive:
+                    derived = extract_permissions(archive, metadata.app_prefix,
+                                                  metadata.info)
+                if derived is not None:
+                    metadata['permissions'] = derived
             except Exception:
                 pass
         metadata.update(size=count, sha256=digest.hexdigest())
@@ -613,6 +793,11 @@ def build_app(project, resolved, metadata, base_url, previous=None):
             raise ConfigFailure('app_permissions 必须是含 entitlements 和 privacy 数组的对象')
         # Explicit maintainer declaration, not inferred/verified by this tool.
         app['appPermissions'] = permissions
+    elif metadata.get('permissions'):
+        # Derived from the IPA itself at download time (entitlement keys
+        # from the code signature plus Info.plist privacy permissions).
+        # An explicit app_permissions declaration always wins over this.
+        app['appPermissions'] = metadata['permissions']
     return app, date
 
 
