@@ -12,7 +12,7 @@
 - GitHub Actions 计划每 **30 分钟**检查一次，可手动运行；调度不是实时推送，可能排队、延迟。客户端也需要刷新源，**不会自动替换已安装 App**。
 - 仅支持**公开发行的 IPA 文件**。只有源码、需登录下载、私有 Releases、GitHub Actions 临时构建产物不在本模板范围。
 - 生成 AltStore 风格 JSON，并保留旧式单版本字段；主要针对 LiveContainer 源功能。已静态核对官方 3.8.0 与主分支解析器，空 `apps: []` 可解析，构建号同时输出 `buildNumber` / `buildVersion`。**没有在你的设备上实测**，也不保证所有旧版兼容。
-- AltStore / SideStore 的实际安装还有权限声明等要求。本模板不会从签名或 Mach-O 自动提取完整 entitlements，也不伪造空权限；需维护者按实际 IPA 添加准确的 `app_permissions`，并自行验证安装。不能把“可解析 JSON”等同“跨客户端安装已验证”。
+- AltStore / SideStore 的实际安装还有权限声明等要求。生成器会从 IPA 本体自动派生 `appPermissions`：主程序代码签名中的 entitlements 键（签名缺失时退回内嵌描述文件）加上 Info.plist 隐私用途说明（按 AltStore 权限类型名映射，无法映射的键跳过）。派生是尽力而为，提取失败时不写该字段，客户端会照旧弹出权限警告；维护者也可用 `app_permissions` 显式声明覆盖派生结果。仍需自行在设备上验证安装，不能把“可解析 JSON”等同“跨客户端安装已验证”。
 - 收录不代表安全审计，也不保证 App 可在 LiveContainer 中运行。不会编译、破解、重签名或修改 IPA。
 
 ## 一、部署到 GitHub Pages
@@ -95,7 +95,7 @@ GitHub Actions 会用 Pages 提供的地址自动填入 `SOURCE_BASE_URL`，不�
 | `bundle_identifier` | 可选锁定期望的 Bundle ID；不匹配则拒绝发布 |
 | `icon_url` | 公开 HTTPS PNG/JPEG 图标地址；不填时自动提取 IPA 内置图标，再失败才用本源通用图标 |
 | `enabled` | 设为 `false` 暂停收录，下一次成功发布时移出源 |
-| `app_permissions` | 可选的真实权限声明，含 `entitlements` / `privacy` 两个数组；原样输出为 `appPermissions`，结构与内容须遵循客户端官方规范。脚本只校验外层，不认证准确性 |
+| `app_permissions` | 可选的真实权限声明，含 `entitlements` / `privacy` 两个数组；原样输出为 `appPermissions`，结构与内容须遵循客户端官方规范。脚本只校验外层，不认证准确性。不填时生成器自动从 IPA 派生（见上文），显式声明优先于派生结果 |
 
 首次添加时建议先只加一个项目，确认工作流与客户端正常，再扩充。重复 Bundle ID 会停止发布，避免同一 App 多渠道互相覆盖。
 
