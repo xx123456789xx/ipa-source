@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -453,7 +454,7 @@ class GenerationTests(OfflineCase):
         self.assertEqual(result['news'], [])
         self.assertEqual(result['sourceURL'], BASE + '/source.json')
         self.assertEqual(json.loads((self.output / 'status.json').read_text()), {'apps': []})
-        self.assertEqual(self.cache_json(), {'schema': 2, 'items': {}})
+        self.assertEqual(self.cache_json(), {'schema': 3, 'items': {}})
         self.download.assert_not_called()
         self.github.assert_not_called()
 
@@ -604,7 +605,7 @@ class GenerationTests(OfflineCase):
                 previous_calls = self.download.call_count
                 self.generate()
                 self.assertEqual(self.download.call_count, previous_calls + 1)
-                self.assertEqual(self.cache_json()['schema'], 2)
+                self.assertEqual(self.cache_json()['schema'], 3)
 
     def test_missing_cached_metadata_triggers_download(self):
         self.config['projects'] = [{'repo': 'owner/repo'}]
@@ -859,6 +860,88 @@ class IconTests(GenerationTests):
         app = self.generate()['apps'][0]
         self.assertEqual(app['iconURL'], 'https://images.example/icon.png')
         self.assertFalse((self.output / 'icons' / 'org.example.app.png').exists())
+
+
+def macho_with_entitlements(entitlements, fat=False):
+    """Minimal Mach-O carrying `entitlements` in its code signature."""
+    xml = plistlib.dumps(entitlements)
+    blob = struct.pack('>II', 0xFADE7171, len(xml) + 8) + xml
+    superblob = (struct.pack('>III', 0xFADE0CC0, 20 + len(blob), 1) +
+                 struct.pack('>II', 5, 20) + blob)
+    header = struct.pack('<IIIIIIII', 0xFEEDFACF, 0x0100000C, 0, 2, 1, 16, 0, 0)
+    command = struct.pack('<IIII', 0x1D, 16, len(header) + 16, len(superblob))
+    thin = header + command + superblob
+    if not fat:
+        return thin
+    fat_header = (struct.pack('>II', 0xCAFEBABE, 1) +
+                  struct.pack('>IIIII', 0x0100000C, 0, 28, len(thin), 0))
+    return fat_header + thin
+
+
+def ipa_with_permissions(info_extra=None, executable=None, provision=None):
+    info = dict(PLIST, CFBundleExecutable='Synthetic')
+    if info_extra:
+        info.update(info_extra)
+    entries = [('Payload/Synthetic.app/Info.plist', plistlib.dumps(info))]
+    if executable is not None:
+        entries.append(('Payload/Synthetic.app/Synthetic', executable))
+    if provision is not None:
+        entries.append(('Payload/Synthetic.app/embedded.mobileprovision', provision))
+    return make_ipa(entries=entries)
+
+
+class PermissionTests(GenerationTests):
+    def test_permissions_derived_from_code_signature_and_info_plist(self):
+        self.blob = ipa_with_permissions(
+            info_extra={'NSCameraUsageDescription': 'Synthetic camera use',
+                        'NSPhotoLibraryUsageDescription': 'Synthetic photos use',
+                        'NSUnknownThingUsageDescription': 'No AltStore type'},
+            executable=macho_with_entitlements({
+                'get-task-allow': True,
+                'com.apple.security.application-groups': ['group.example.app']}))
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['appPermissions'], {
+            'entitlements': [{'name': 'com.apple.security.application-groups'},
+                             {'name': 'get-task-allow'}],
+            'privacy': [{'name': 'Camera',
+                         'usageDescription': 'Synthetic camera use'},
+                        {'name': 'PhotoLibrary',
+                         'usageDescription': 'Synthetic photos use'}]})
+
+    def test_permissions_derived_from_fat_binary(self):
+        self.blob = ipa_with_permissions(
+            executable=macho_with_entitlements({'aps-environment': 'production'},
+                                               fat=True))
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['appPermissions']['entitlements'],
+                         [{'name': 'aps-environment'}])
+        self.assertEqual(app['appPermissions']['privacy'], [])
+
+    def test_permissions_fall_back_to_provisioning_profile(self):
+        profile = (b'\x00\x01binary' + plistlib.dumps(
+            {'Entitlements': {'keychain-access-groups': ['TEAM.example'],
+                              'com.apple.developer.siri': True}}) + b'\x02\x03')
+        self.blob = ipa_with_permissions(provision=profile)
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['appPermissions']['entitlements'],
+                         [{'name': 'com.apple.developer.siri'},
+                          {'name': 'keychain-access-groups'}])
+
+    def test_explicit_declaration_wins_over_derived(self):
+        declarations = {'entitlements': [], 'privacy': []}
+        self.blob = ipa_with_permissions(
+            info_extra={'NSCameraUsageDescription': 'Synthetic camera use'},
+            executable=macho_with_entitlements({'get-task-allow': True}))
+        self.config['projects'] = [{'url': DOWNLOAD, 'app_permissions': declarations}]
+        self.assertEqual(self.generate()['apps'][0]['appPermissions'], declarations)
+
+    def test_no_permissions_anywhere_omits_field(self):
+        self.blob = ipa_with_permissions(executable=b'\x00' * 64)
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        self.assertNotIn('appPermissions', self.generate()['apps'][0])
 
 
 class SubtitleTests(GenerationTests):
