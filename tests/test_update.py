@@ -922,6 +922,56 @@ class SubtitleTests(GenerationTests):
         self.assertTrue(cleaned.endswith('…'))
         self.assertLessEqual(len(cleaned), 49)
 
+    def generate_with_readme(self, description, readme_text):
+        import base64 as b64
+        project = {'repo': 'owner/repo'}
+        self.config['projects'] = [project]
+        releases = [release(assets=[asset(size=len(self.blob))])]
+        calls = []
+
+        def fake(url, timeout):
+            calls.append(url)
+            if 'releases' in url:
+                return releases
+            if url.endswith('/readme'):
+                return {'content': b64.b64encode(
+                    readme_text.encode()).decode()}
+            return {'description': description}
+
+        with mock.patch.object(update, 'github_json', side_effect=fake):
+            return self.generate(), calls
+
+    def test_readme_fallback_when_description_empty(self):
+        readme = ('![icon](icon.png)\n\n# Demo\n\n'
+                  '原生 SwiftUI 的红果短剧客户端，适配折叠屏与 iPad。开源免费。\n\n'
+                  '## 功能\n\n- 播放\n')
+        result, _ = self.generate_with_readme('', readme)
+        self.assertEqual(result['apps'][0]['subtitle'],
+                         '原生 SwiftUI 的红果短剧客户端，适配折叠屏与 iPad。开源免费')
+
+    def test_description_wins_and_readme_not_fetched(self):
+        result, calls = self.generate_with_readme(
+            'Repo description words', '# Demo\n\nREADME intro words here.\n')
+        self.assertEqual(result['apps'][0]['subtitle'],
+                         'Repo description words')
+        self.assertFalse(any(url.endswith('/readme') for url in calls))
+
+    def test_readme_without_prose_no_subtitle(self):
+        readme = ('[![badge](b.svg)](https://example.com)\n\n# Demo\n\n'
+                  '| a | b |\n| - | - |\n')
+        result, _ = self.generate_with_readme('', readme)
+        self.assertNotIn('subtitle', result['apps'][0])
+
+    def test_readme_intro_units(self):
+        self.assertEqual(update.readme_intro(''), '')
+        self.assertEqual(update.readme_intro(None), '')
+        self.assertEqual(
+            update.readme_intro('# T\n\n第一段 **加粗** 文字\n接第二行。\n\n## 后\n'),
+            '第一段 加粗 文字 接第二行。')
+        self.assertEqual(
+            update.readme_intro('<p align="center">x</p>\n\n正文 [链接](https://a.b) 介绍。\n'),
+            '正文 链接 介绍。')
+
 
 class StaleFallbackTests(GenerationTests):
     def test_failed_upstream_keeps_last_good_entry(self):
