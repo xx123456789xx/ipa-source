@@ -43,6 +43,12 @@
       "asset_pattern": "LiveContainer+SideStore.ipa",
       "include_prereleases": true,
       "enabled": true
+    },
+    {
+      "repo": "mengangs/ipadn",
+      "asset_pattern": "iPadn-*[0-9]-unsigned.ipa",
+      "include_prereleases": false,
+      "enabled": true
     }
   ]
 }
