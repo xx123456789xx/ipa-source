@@ -167,23 +167,65 @@ function wireSearch() {
     if (nomatch) nomatch.hidden = visible > 0;
   });
 }
-(async () => {
-  try {
-    const response = await fetch('source.json', {cache: 'no-store'});
-    if (!response.ok) throw new Error('source load failed');
-    const source = await response.json();
-    document.title = source.name;
-    $('#title').textContent = source.name;
-    $('#subtitle').textContent = source.subtitle || source.description || '';
-    $('#count').textContent = `${source.apps.length} 个应用`;
-    if (!source.apps.length) showEmpty();
-    for (const app of source.apps) $('#apps').append(buildCard(app));
-    wireSearch();
-    $('#message').textContent = location.protocol === 'https:'
-      ? '每 30 分钟计划检查上游；GitHub 调度可能延迟，客户端需刷新源。'
-      : '当前为本地预览。部署到 GitHub Pages 后，才有可订阅的公网 HTTPS 地址。';
-    watchPending(source);
-  } catch (_) {
+let lastLoad = 0;
+let searchWired = false;
+let loadedSignature = '';
+function sourceSignature(source) {
+  return (source.apps || []).map((a) => `${a.bundleIdentifier}@${a.version}:${a.size}`).join('|');
+}
+async function fetchSource() {
+  const response = await fetch('source.json', {cache: 'no-store'});
+  if (!response.ok) throw new Error('source load failed');
+  return response.json();
+}
+function hideUpdateBar() { const bar = $('#update-bar'); if (bar) bar.hidden = true; }
+function renderSource(source, first) {
+  document.title = source.name;
+  $('#title').textContent = source.name;
+  $('#subtitle').textContent = source.subtitle || source.description || '';
+  $('#count').textContent = `${source.apps.length} 个应用`;
+  $('#apps').replaceChildren();
+  if (!source.apps.length) showEmpty();
+  for (const app of source.apps) $('#apps').append(buildCard(app));
+  if (!searchWired) { wireSearch(); searchWired = true; }
+  const search = $('#search');
+  if (search && search.value) search.dispatchEvent(new Event('input'));
+  $('#message').textContent = location.protocol === 'https:'
+    ? '每 30 分钟计划检查上游；GitHub 调度可能延迟，客户端需刷新源。'
+    : '当前为本地预览。部署到 GitHub Pages 后，才有可订阅的公网 HTTPS 地址。';
+  loadedSignature = sourceSignature(source);
+  lastLoad = Date.now();
+  hideUpdateBar();
+  if (first) watchPending(source);
+}
+async function loadSource(first) {
+  try { renderSource(await fetchSource(), first); }
+  catch (_) {
     $('#message').textContent = '源暂时无法读取，请检查 source.json 是否已生成并正确部署。';
   }
-})();
+}
+// No browser chrome exists in a home-screen web app, so the page keeps
+// itself current: returning to the front (or a 90s tick while visible)
+// re-checks the source; new content applies silently, unless the user
+// is mid-search — then a tappable banner offers the refresh instead.
+async function checkForUpdate() {
+  if (document.hidden || !loadedSignature) return;
+  try {
+    const source = await fetchSource();
+    if (sourceSignature(source) === loadedSignature) return;
+    const search = $('#search');
+    if (search && (search.value || document.activeElement === search)) {
+      const bar = $('#update-bar');
+      if (bar) bar.hidden = false;
+    } else {
+      renderSource(source, false);
+    }
+  } catch (_) { /* transient network errors are normal; next tick retries */ }
+}
+loadSource(true);
+const updateBar = $('#update-bar');
+if (updateBar) updateBar.addEventListener('click', () => loadSource(false));
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastLoad > 60 * 1000) checkForUpdate();
+});
+setInterval(checkForUpdate, 90 * 1000);
