@@ -454,7 +454,7 @@ class GenerationTests(OfflineCase):
         self.assertEqual(result['news'], [])
         self.assertEqual(result['sourceURL'], BASE + '/source.json')
         self.assertEqual(json.loads((self.output / 'status.json').read_text()), {'apps': []})
-        self.assertEqual(self.cache_json(), {'schema': 3, 'items': {}})
+        self.assertEqual(self.cache_json(), {'schema': 4, 'items': {}})
         self.download.assert_not_called()
         self.github.assert_not_called()
 
@@ -605,7 +605,7 @@ class GenerationTests(OfflineCase):
                 previous_calls = self.download.call_count
                 self.generate()
                 self.assertEqual(self.download.call_count, previous_calls + 1)
-                self.assertEqual(self.cache_json()['schema'], 3)
+                self.assertEqual(self.cache_json()['schema'], 4)
 
     def test_missing_cached_metadata_triggers_download(self):
         self.config['projects'] = [{'repo': 'owner/repo'}]
@@ -904,10 +904,26 @@ class PermissionTests(GenerationTests):
         self.assertEqual(app['appPermissions'], {
             'entitlements': [{'name': 'com.apple.security.application-groups'},
                              {'name': 'get-task-allow'}],
-            'privacy': [{'name': 'Camera',
-                         'usageDescription': 'Synthetic camera use'},
-                        {'name': 'PhotoLibrary',
-                         'usageDescription': 'Synthetic photos use'}]})
+            'privacy': {'NSCameraUsageDescription': 'Synthetic camera use',
+                        'NSPhotoLibraryUsageDescription': 'Synthetic photos use',
+                        'NSUnknownThingUsageDescription': 'No AltStore type'}})
+
+    def test_permissions_keep_keys_legacy_names_cannot_express(self):
+        self.blob = ipa_with_permissions(
+            info_extra={'NFCReaderUsageDescription': 'Synthetic NFC use',
+                        'NSCalendarsFullAccessUsageDescription': 'Full calendars',
+                        'NSCalendarsWriteOnlyAccessUsageDescription': 'Write-only',
+                        'NSRemindersFullAccessUsageDescription': 'Full reminders',
+                        'NSLocationTemporaryUsageDescriptionDictionary':
+                            {'SyntheticPurpose': 'Synthetic reason'}})
+        self.config['projects'] = [{'url': DOWNLOAD}]
+        app = self.generate()['apps'][0]
+        self.assertEqual(app['appPermissions']['privacy'], {
+            'NFCReaderUsageDescription': 'Synthetic NFC use',
+            'NSCalendarsFullAccessUsageDescription': 'Full calendars',
+            'NSCalendarsWriteOnlyAccessUsageDescription': 'Write-only',
+            'NSRemindersFullAccessUsageDescription': 'Full reminders',
+            'NSLocationTemporaryUsageDescriptionDictionary': None})
 
     def test_permissions_derived_from_fat_binary(self):
         self.blob = ipa_with_permissions(
@@ -917,7 +933,7 @@ class PermissionTests(GenerationTests):
         app = self.generate()['apps'][0]
         self.assertEqual(app['appPermissions']['entitlements'],
                          [{'name': 'aps-environment'}])
-        self.assertEqual(app['appPermissions']['privacy'], [])
+        self.assertEqual(app['appPermissions']['privacy'], {})
 
     def test_permissions_fall_back_to_provisioning_profile(self):
         profile = (b'\x00\x01binary' + plistlib.dumps(
