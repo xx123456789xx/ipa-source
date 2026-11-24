@@ -37,6 +37,12 @@
       "asset_pattern": "*.ipa",
       "include_prereleases": false,
       "enabled": true
+    },
+    {
+      "repo": "LiveContainer/LiveContainer",
+      "asset_pattern": "LiveContainer+SideStore.ipa",
+      "include_prereleases": true,
+      "enabled": true
     }
   ]
 }
