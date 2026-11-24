@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
 USER_AGENT = 'Personal-IPA-Source/1.3'
-CACHE_SCHEMA = 3
+CACHE_SCHEMA = 4
 DEFAULT_TINT = '4263EB'
 DEFAULT_DESCRIPTION = '公开上游 IPA。收录不代表兼容性或安全认证。'
 
@@ -494,50 +494,19 @@ def inspect_ipa(path):
 
 # --- App permissions (AltStore `appPermissions`) ---------------------------
 # AltStore/SideStore compare the permissions an IPA actually requires
-# against the source's declared appPermissions and warn about anything
-# undeclared. Derive the declaration from the IPA itself: entitlement keys
-# from the main executable's code signature (falling back to the embedded
-# provisioning profile) and privacy permissions from Info.plist
-# usage-description keys, mapped to AltStore's permission type names
-# (AltStoreCore/Resources/Permissions.plist). Unknown usage keys have no
-# AltStore type and are skipped, matching what clients can check.
-PRIVACY_PERMISSION_TYPES = {
-    'NSAppleMusicUsageDescription': 'AppleMusic',
-    'NSBluetoothAlwaysUsageDescription': 'BluetoothAlways',
-    'NSBluetoothPeripheralUsageDescription': 'BluetoothPeripheral',
-    'NSCalendarsFullAccessUsageDescription': 'Calendars',
-    'NSCalendarsUsageDescription': 'Calendars',
-    'NSCalendarsWriteOnlyAccessUsageDescription': 'Calendars',
-    'NSCameraUsageDescription': 'Camera',
-    'NSContactsUsageDescription': 'Contacts',
-    'NSFaceIDUsageDescription': 'FaceID',
-    'NSFallDetectionUsageDescription': 'FallDetection',
-    'NSGKFriendListUsageDescription': 'GKFriendList',
-    'NSHealthClinicalHealthRecordsShareUsageDescription':
-        'HealthClinicalHealthRecordsShare',
-    'NSHealthShareUsageDescription': 'HealthShare',
-    'NSHealthUpdateUsageDescription': 'HealthUpdate',
-    'NSHomeKitUsageDescription': 'HomeKit',
-    'NSLocalNetworkUsageDescription': 'LocalNetwork',
-    'NSLocationAlwaysAndWhenInUseUsageDescription': 'LocationAlwaysAndWhenInUse',
-    'NSLocationAlwaysUsageDescription': 'LocationAlways',
-    'NSLocationTemporaryUsageDescription': 'LocationTemporary',
-    'NSLocationUsageDescription': 'Location',
-    'NSLocationWhenInUseUsageDescription': 'LocationWhenInUse',
-    'NSMicrophoneUsageDescription': 'Microphone',
-    'NSMotionUsageDescription': 'Motion',
-    'NSNFCReaderUsageDescription': 'NFCReader',
-    'NSNearbyInteractionAllowOnceUsageDescription': 'NearbyInteractionAllowOnce',
-    'NSNearbyInteractionUsageDescription': 'NearbyInteraction',
-    'NSPhotoLibraryAddUsageDescription': 'PhotoLibraryAdd',
-    'NSPhotoLibraryUsageDescription': 'PhotoLibrary',
-    'NSRemindersFullAccessUsageDescription': 'Reminders',
-    'NSRemindersUsageDescription': 'Reminders',
-    'NSSensorKitUsageDescription': 'SensorKit',
-    'NSSiriUsageDescription': 'Siri',
-    'NSSpeechRecognitionUsageDescription': 'SpeechRecognition',
-    'NSUserTrackingUsageDescription': 'UserTracking',
-}
+# against the source's declared appPermissions and refuse/warn about
+# anything undeclared. Derive the declaration from the IPA itself:
+# entitlement keys from the main executable's code signature (falling
+# back to the embedded provisioning profile) and privacy permissions
+# from every Info.plist in the bundle (app, extensions, frameworks).
+# Clients identify a privacy permission by its raw Info.plist key, and
+# the current source format declares them as a {key: usageDescription}
+# dictionary. The older [{name, usageDescription}] form is lossy: the
+# client converts each name to "NS" + name + "UsageDescription", which
+# cannot express keys such as NFCReaderUsageDescription (no NS prefix)
+# or NSLocationTemporaryUsageDescriptionDictionary, and collapses
+# distinct keys (NSCalendarsFullAccess vs NSCalendars) into one type.
+# So: emit raw keys verbatim, never mapped, never skipped.
 
 
 def _superblob_entitlement_keys(blob):
@@ -627,14 +596,34 @@ def _provision_entitlement_keys(data):
 
 def extract_permissions(archive, app_prefix, info):
     """Best-effort appPermissions derived from the IPA; None when empty."""
-    privacy, seen = [], set()
-    for key, kind in PRIVACY_PERMISSION_TYPES.items():
-        if kind in seen:
+    privacy = {}
+    try:
+        plist_names = [name for name in archive.namelist()
+                       if name.startswith(app_prefix)
+                       and name.endswith('/Info.plist')
+                       and len(name) < len(app_prefix) + 128]
+    except Exception:
+        plist_names = []
+    for name in plist_names:
+        try:
+            entry = archive.getinfo(name)
+            if entry.file_size > 4 * 1024 * 1024:
+                continue
+            with archive.open(entry) as stream:
+                parsed = plistlib.load(stream)
+        except Exception:
             continue
-        value = info.get(key)
-        if isinstance(value, str) and value.strip():
-            privacy.append({'name': kind, 'usageDescription': value})
-            seen.add(kind)
+        if not isinstance(parsed, dict):
+            continue
+        for key, value in parsed.items():
+            if 'UsageDescription' not in key or key in privacy:
+                continue
+            privacy[key] = value if isinstance(value, str) and value.strip() else None
+    if not privacy:
+        # Fall back to the main Info.plist handed in by the caller.
+        for key, value in (info or {}).items():
+            if 'UsageDescription' in key:
+                privacy[key] = value if isinstance(value, str) and value.strip() else None
     keys = set()
     executable = info.get('CFBundleExecutable')
     if isinstance(executable, str) and executable and '/' not in executable:
