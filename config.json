@@ -49,6 +49,12 @@
       "asset_pattern": "iPadn-*[0-9]-unsigned.ipa",
       "include_prereleases": false,
       "enabled": true
+    },
+    {
+      "repo": "Reukix/Reloc",
+      "asset_pattern": "*.ipa",
+      "include_prereleases": false,
+      "enabled": true
     }
   ]
 }
